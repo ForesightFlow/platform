@@ -145,11 +145,14 @@ uv run fflow collect subgraph --all-resolved --min-volume 50000 --max-volume 200
 - Markets processed: 189 / 10,602 (1.8%) | Trades: 1,403,003 | Wallets: 177,227 | Errors: 0
 
 **Status as of 2026-04-26 17:24 UTC (140 min in):**
-- Markets processed: 351 / 10,602 (3.3%)
-- Errors: 0
-- Rate: ~2.4 markets/min (vol band ~$1.33M)
-- Trades in DB: 2,564,028
-- Wallets in DB: 252,601
+- Markets processed: 351 / 10,602 (3.3%) | Trades: 2,564,028 | Wallets: 252,601 | Errors: 0
+
+**Status as of 2026-04-26 18:25 UTC (201 min in):**
+- Markets processed: 530 / 10,602 (5.0%)
+- bad-indexers skips: 3 (fast-fail, as designed — The Graph indexer down for those markets)
+- Rate: ~2.9 markets/min (accelerating; vol band ~$1.15M)
+- Trades in DB: 3,625,367
+- Wallets in DB: 315,162
 - Note: batch_progress.jsonl not written — this batch started before checkpoint feature merged
 
 **Sample markets confirmed working (all successful):**
