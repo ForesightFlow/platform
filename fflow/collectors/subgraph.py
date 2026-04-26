@@ -16,9 +16,12 @@ log = get_logger(__name__)
 
 _PAGE_SIZE = 1000
 
+# API note (verified 2026-04-26): The Polymarket subgraph exposes `enrichedOrderFilleds`
+# (not `orderFilleds`). market.id is the YES token decimal ID. size is raw int (divide by
+# 1e6 for shares). price is already a 0-1 decimal. side is "Buy"/"Sell" relative to the token.
 _TRADES_QUERY = gql("""
 query Trades($market: String!, $lastId: String!, $first: Int!) {
-  orderFilleds(
+  enrichedOrderFilleds(
     where: { market: $market, id_gt: $lastId }
     first: $first
     orderBy: id
@@ -27,16 +30,13 @@ query Trades($market: String!, $lastId: String!, $first: Int!) {
     id
     timestamp
     transactionHash
-    maker
-    taker
-    makerAssetId
-    takerAssetId
-    makerAmountFilled
-    takerAmountFilled
-    fee
-    market {
-      id
-    }
+    orderHash
+    maker { id }
+    taker { id }
+    market { id }
+    side
+    size
+    price
   }
 }
 """)
@@ -91,8 +91,12 @@ class SubgraphCollector(BaseCollector):
         headers = {"Accept": "application/json"}
         if settings.thegraph_api_key:
             headers["Authorization"] = f"Bearer {settings.thegraph_api_key}"
-        transport = HTTPXAsyncTransport(url=settings.subgraph_url, headers=headers)
-        return Client(transport=transport, fetch_schema_from_transport=False)
+        transport = HTTPXAsyncTransport(
+            url=settings.subgraph_url,
+            headers=headers,
+            timeout=60.0,
+        )
+        return Client(transport=transport, fetch_schema_from_transport=False, execute_timeout=60)
 
     async def _fetch_trades(
         self,
@@ -100,21 +104,35 @@ class SubgraphCollector(BaseCollector):
         yes_token: str,
         from_ts: datetime | None,
     ) -> list[dict]:
+        import asyncio as _asyncio
+        from gql.transport.exceptions import TransportConnectionFailed
+
         from_unix = int(from_ts.timestamp()) if from_ts else 0
         all_trades: list[dict] = []
         last_id = ""
 
         async with self._make_client() as client:
             while True:
-                result = await client.execute(
-                    _TRADES_QUERY,
-                    variable_values={
-                        "market": market_id.lower(),
-                        "lastId": last_id,
-                        "first": _PAGE_SIZE,
-                    },
-                )
-                page = result.get("orderFilleds", [])
+                for attempt in range(3):
+                    try:
+                        result = await client.execute(
+                            _TRADES_QUERY,
+                            variable_values={
+                                "market": yes_token,
+                                "lastId": last_id,
+                                "first": _PAGE_SIZE,
+                            },
+                        )
+                        break
+                    except (TransportConnectionFailed, Exception) as exc:
+                        from gql.transport.exceptions import TransportQueryError
+                        if isinstance(exc, TransportQueryError) and "bad indexers" in str(exc):
+                            raise  # indexer unavailable — no point retrying
+                        if attempt == 2:
+                            raise
+                        await _asyncio.sleep(2 ** attempt)
+
+                page = result.get("enrichedOrderFilleds", [])
                 if not page:
                     break
 
@@ -142,31 +160,20 @@ class SubgraphCollector(BaseCollector):
 
         for t in raw_trades:
             tx = t.get("transactionHash", "")
-            # log_index from id (format: txHash-logIndex or sequential id)
             raw_id = t.get("id", "")
             log_idx = _parse_log_index(raw_id)
             ts = datetime.fromtimestamp(int(t["timestamp"]), tz=UTC)
-            taker = (t.get("taker") or "").lower()
-            maker = (t.get("maker") or "").lower() or None
+            taker = ((t.get("taker") or {}).get("id") or "").lower()
+            maker = ((t.get("maker") or {}).get("id") or "").lower() or None
 
-            taker_asset = t.get("takerAssetId", "")
-            maker_amount = int(t.get("makerAmountFilled", 0))
-            taker_amount = int(t.get("takerAmountFilled", 0))
+            raw_side = t.get("side", "Buy")
+            side = "BUY" if raw_side.lower() == "buy" else "SELL"
+            outcome_index = 1  # all enrichedOrderFilleds filtered by YES token
 
-            # taker receives YES token → BUY; taker gives YES token → SELL
-            if str(taker_asset) == yes_token:
-                side = "BUY"
-                outcome_index = 1
-                size_shares = taker_amount
-                usdc_paid = maker_amount
-            else:
-                side = "SELL"
-                outcome_index = 1
-                size_shares = maker_amount
-                usdc_paid = taker_amount
-
-            price_val = (usdc_paid / size_shares / 1e6) if size_shares else 0
-            notional = usdc_paid / 1e6
+            raw_size = int(t.get("size", 0))
+            size_shares = raw_size / 1e6
+            price_val = float(t.get("price", 0))
+            notional = size_shares * price_val
 
             trade_rows.append({
                 "market_id": market_id,
@@ -177,7 +184,7 @@ class SubgraphCollector(BaseCollector):
                 "maker_address": maker,
                 "side": side,
                 "outcome_index": outcome_index,
-                "size_shares": str(size_shares / 1e6),
+                "size_shares": str(round(size_shares, 6)),
                 "price": str(round(price_val, 6)),
                 "notional_usdc": str(round(notional, 6)),
                 "raw_event": t,
@@ -237,6 +244,10 @@ class SubgraphCollector(BaseCollector):
 
 
 def _parse_log_index(raw_id: str) -> int:
+    # enrichedOrderFilleds id format: txHash_orderHash — hash the orderHash part
+    if "_" in raw_id:
+        order_hash_part = raw_id.split("_", 1)[-1]
+        return int(order_hash_part, 16) % 2**31 if order_hash_part.startswith("0x") else hash(order_hash_part) % 2**31
     if "-" in raw_id:
         try:
             return int(raw_id.split("-")[-1])
