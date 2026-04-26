@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_json: bool = False
 
-    model_config = SettingsConfigDict(env_prefix="FFLOW_", env_file=".env")
+    model_config = SettingsConfigDict(env_prefix="FFLOW_", env_file=".env", extra="ignore")
 
 
 settings = Settings()
