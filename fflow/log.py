@@ -7,7 +7,6 @@ import structlog
 def configure_logging(log_level: str = "INFO", log_json: bool = False) -> None:
     shared_processors: list[structlog.types.Processor] = [
         structlog.stdlib.add_log_level,
-        structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.ExceptionRenderer(),

@@ -1,0 +1,5 @@
+# Data dumps (large, not committed)
+labels_post_task02.sql
+
+# Schema dumps ARE committed
+!schema_post_task02.sql

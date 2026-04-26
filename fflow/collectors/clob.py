@@ -111,11 +111,15 @@ class ClobCollector(BaseCollector):
         if not raw_prices:
             return 0
 
+        seen_ts: set = set()
         rows = []
         for p in raw_prices:
             ts_raw = p["t"]
             ts = datetime.fromtimestamp(ts_raw, tz=UTC)
             ts_snapped = ts.replace(second=0, microsecond=0)
+            if ts_snapped in seen_ts:
+                continue
+            seen_ts.add(ts_snapped)
             price_val = str(p["p"])
             rows.append({
                 "market_id": market_id,

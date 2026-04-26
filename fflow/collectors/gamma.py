@@ -116,11 +116,13 @@ class GammaCollector(BaseCollector):
             return 0
 
         now = datetime.now(UTC)
+        seen_ids: set[str] = set()
         rows = []
         for m in raw_markets:
             condition_id = m.get("conditionId") or m.get("id")
-            if not condition_id:
+            if not condition_id or condition_id in seen_ids:
                 continue
+            seen_ids.add(condition_id)
 
             event = (m.get("events") or [{}])[0]
             event_title = event.get("title", "")
@@ -141,26 +143,30 @@ class GammaCollector(BaseCollector):
                 "last_refreshed_at": now,
             })
 
-        stmt = (
-            insert(Market)
-            .values(rows)
-            .on_conflict_do_update(
-                index_elements=["id"],
-                set_={
-                    "question": insert(Market).excluded.question,
-                    "description": insert(Market).excluded.description,
-                    "category_raw": insert(Market).excluded.category_raw,
-                    "created_at_chain": insert(Market).excluded.created_at_chain,
-                    "end_date": insert(Market).excluded.end_date,
-                    "volume_total_usdc": insert(Market).excluded.volume_total_usdc,
-                    "liquidity_usdc": insert(Market).excluded.liquidity_usdc,
-                    "slug": insert(Market).excluded.slug,
-                    "raw_metadata": insert(Market).excluded.raw_metadata,
-                    "last_refreshed_at": insert(Market).excluded.last_refreshed_at,
-                },
+        # asyncpg limit: 32767 params per query; with 12 cols per row → max ~2730 rows/batch
+        _BATCH = 2000
+        for i in range(0, len(rows), _BATCH):
+            batch = rows[i : i + _BATCH]
+            stmt = (
+                insert(Market)
+                .values(batch)
+                .on_conflict_do_update(
+                    index_elements=["id"],
+                    set_={
+                        "question": insert(Market).excluded.question,
+                        "description": insert(Market).excluded.description,
+                        "category_raw": insert(Market).excluded.category_raw,
+                        "created_at_chain": insert(Market).excluded.created_at_chain,
+                        "end_date": insert(Market).excluded.end_date,
+                        "volume_total_usdc": insert(Market).excluded.volume_total_usdc,
+                        "liquidity_usdc": insert(Market).excluded.liquidity_usdc,
+                        "slug": insert(Market).excluded.slug,
+                        "raw_metadata": insert(Market).excluded.raw_metadata,
+                        "last_refreshed_at": insert(Market).excluded.last_refreshed_at,
+                    },
+                )
             )
-        )
-        await session.execute(stmt)
+            await session.execute(stmt)
         await session.commit()
         log.info("gamma_upserted", n=len(rows))
         return len(rows)
