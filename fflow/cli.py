@@ -41,14 +41,28 @@ def collect_gamma(
     categories: Annotated[
         Optional[str], typer.Option(help="Comma-separated Polymarket tag names")
     ] = None,
+    closed: Annotated[bool, typer.Option("--closed", help="Fetch historical resolved markets")] = False,
+    end_date_min: Annotated[Optional[str], typer.Option(help="YYYY-MM-DD min end date (with --closed)")] = None,
+    end_date_max: Annotated[Optional[str], typer.Option(help="YYYY-MM-DD max end date (with --closed)")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
 ) -> None:
-    """Fetch market metadata from Polymarket Gamma API."""
+    """Fetch market metadata from Polymarket Gamma API.
+
+    Normal mode: fetches active + recently closed markets ordered by createdAt.
+    Historical mode (--closed): fetches resolved markets by end_date range.
+    """
     from fflow.collectors.gamma import GammaCollector
 
     since_dt = _parse_date(since)
     cats = [c.strip() for c in categories.split(",")] if categories else []
-    result = asyncio.run(GammaCollector().run(since=since_dt, categories=cats, dry_run=dry_run))
+    result = asyncio.run(GammaCollector().run(
+        since=since_dt,
+        categories=cats,
+        closed=closed,
+        end_date_min=end_date_min,
+        end_date_max=end_date_max,
+        dry_run=dry_run,
+    ))
     typer.echo(f"gamma: {result.status}, n={result.n_written}")
     if result.error:
         typer.echo(f"error: {result.error}", err=True)
@@ -89,24 +103,124 @@ def collect_clob(
 
 @collect_app.command("subgraph")
 def collect_subgraph(
-    market: Annotated[str, typer.Option(help="Market condition ID (0x...)")],
+    market: Annotated[Optional[str], typer.Option(help="Market condition ID (0x...)")] = None,
     from_ts: Annotated[Optional[str], typer.Option(help="ISO datetime")] = None,
+    all_resolved: Annotated[bool, typer.Option("--all-resolved", help="Run for all resolved markets")] = False,
+    min_volume: Annotated[float, typer.Option(help="Min volume_total_usdc filter (batch only)")] = 50000.0,
+    max_volume: Annotated[Optional[float], typer.Option(help="Max volume_total_usdc filter (batch only)")] = None,
+    limit: Annotated[Optional[int], typer.Option(help="Max markets to process in batch mode")] = None,
+    categories: Annotated[Optional[str], typer.Option(help="Comma-separated category_fflow filter (batch only)")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
 ) -> None:
     """Fetch full trade log from Polymarket subgraph."""
     from fflow.collectors.subgraph import SubgraphCollector
 
-    result = asyncio.run(
-        SubgraphCollector().run(
-            market_id=market,
-            from_ts=_parse_dt(from_ts),
-            dry_run=dry_run,
-        )
-    )
-    typer.echo(f"subgraph: {result.status}, n={result.n_written}")
-    if result.error:
-        typer.echo(f"error: {result.error}", err=True)
+    if not market and not all_resolved:
+        typer.echo("Provide --market or --all-resolved", err=True)
         raise typer.Exit(1)
+
+    if all_resolved:
+        cats = [c.strip() for c in categories.split(",")] if categories else None
+        asyncio.run(_subgraph_batch(min_volume=min_volume, max_volume=max_volume, limit=limit, categories=cats, dry_run=dry_run))
+    else:
+        result = asyncio.run(
+            SubgraphCollector().run(
+                market_id=market,
+                from_ts=_parse_dt(from_ts),
+                dry_run=dry_run,
+            )
+        )
+        typer.echo(f"subgraph: {result.status}, n={result.n_written}")
+        if result.error:
+            typer.echo(f"error: {result.error}", err=True)
+            raise typer.Exit(1)
+
+
+async def _subgraph_batch(
+    min_volume: float,
+    dry_run: bool,
+    max_volume: float | None = None,
+    limit: int | None = None,
+    categories: list[str] | None = None,
+) -> None:
+    import json
+    import pathlib
+    from fflow.collectors.subgraph import SubgraphCollector
+    from fflow.db import AsyncSessionLocal
+    from fflow.models import Market, Trade
+    from sqlalchemy import select, func
+
+    async with AsyncSessionLocal() as session:
+        stmt = (
+            select(Market.id, Market.volume_total_usdc, Market.resolved_at)
+            .where(Market.resolved_at.isnot(None))
+            .where(Market.volume_total_usdc >= min_volume)
+            .order_by(Market.volume_total_usdc.desc())
+        )
+        if max_volume:
+            stmt = stmt.where(Market.volume_total_usdc <= max_volume)
+        if categories:
+            stmt = stmt.where(Market.category_fflow.in_(categories))
+        if limit:
+            stmt = stmt.limit(limit)
+        rows = (await session.execute(stmt)).all()
+
+    total = len(rows)
+    log.info("subgraph_batch_start", total=total, min_volume=min_volume, max_volume=max_volume, limit=limit, categories=categories)
+    if max_volume:
+        typer.echo(f"subgraph batch: {total} markets vol=[${min_volume:,.0f}, ${max_volume:,.0f}]")
+    else:
+        typer.echo(f"subgraph batch: {total} markets vol>=${min_volume:,.0f}" + (f" (limit={limit})" if limit else "") + (f" categories={categories}" if categories else ""))
+
+    progress_path = pathlib.Path("logs/batch_progress.jsonl")
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+
+    collector = SubgraphCollector()
+    stale_cutoff = datetime.now(UTC) - timedelta(days=1)
+    ok = fail = skipped = already_done = 0
+
+    for mid, vol, resolved_at in rows:
+        # Idempotency: skip markets resolved >1 day ago that already have trades
+        resolved_is_old = resolved_at and resolved_at < stale_cutoff
+        if resolved_is_old and not dry_run:
+            async with AsyncSessionLocal() as session:
+                existing = await session.scalar(
+                    select(func.count()).select_from(Trade).where(Trade.market_id == mid)
+                )
+            if existing and existing > 0:
+                already_done += 1
+                log.info("subgraph_batch_skip", market=mid, existing_trades=existing)
+                _write_progress(progress_path, mid, "already_done", existing, float(vol or 0))
+                continue
+
+        try:
+            r = await collector.run(market_id=mid, dry_run=dry_run)
+            if r.n_written and r.n_written > 0:
+                ok += 1
+            else:
+                skipped += 1
+            log.info("subgraph_batch_market", market=mid, vol=float(vol or 0),
+                     status=r.status, n=r.n_written)
+            _write_progress(progress_path, mid, r.status, r.n_written or 0, float(vol or 0))
+        except Exception as exc:
+            fail += 1
+            log.error("subgraph_batch_error", market=mid, error=str(exc))
+            _write_progress(progress_path, mid, "failed", 0, float(vol or 0))
+
+    typer.echo(f"subgraph batch done: ok={ok} skipped(0 trades)={skipped} already_done={already_done} fail={fail}")
+
+
+def _write_progress(path: "pathlib.Path", market_id: str, status: str, trades: int, vol: float) -> None:
+    import json, pathlib
+    entry = {
+        "market_id": market_id,
+        "status": status,
+        "trades_count": trades,
+        "volume": vol,
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+    with open(path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
 
 
 # ---------------------------------------------------------------------------
