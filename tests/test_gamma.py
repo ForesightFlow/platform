@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from fflow.collectors.gamma import GammaCollector, _parse_dt
+from fflow.collectors.gamma import GammaCollector, _gamma_outcome, _parse_dt
 
 
 # ---------------------------------------------------------------------------
@@ -63,6 +63,71 @@ class TestFieldMapping:
         # The Gamma collector never sets category_fflow; taxonomy classifier does
         collector = GammaCollector()
         assert collector.name == "gamma"
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: resolved_at from closedTime
+# ---------------------------------------------------------------------------
+
+class TestResolvedAtFromClosedTime:
+    """_upsert_markets must map closedTime → resolved_at."""
+
+    def _make_closed_market(self) -> dict:
+        return {
+            "conditionId": "0xdead1234",
+            "question": "Will Y happen?",
+            "closedTime": "2024-11-06T23:59:00Z",
+            "endDate": "2024-11-06T00:00:00Z",
+            "outcomePrices": '["1","0"]',
+            "volume": "100000.0",
+            "liquidity": "5000.0",
+            "slug": "will-y-happen",
+            "clobTokenIds": json.dumps(["9999", "8888"]),
+            "events": [{"title": "US Elections 2024"}],
+        }
+
+    def test_resolved_at_extracted(self):
+        m = self._make_closed_market()
+        dt = _parse_dt(m.get("closedTime"))
+        assert dt is not None
+        assert dt.year == 2024
+        assert dt.month == 11
+        assert dt.day == 6
+
+    def test_resolved_at_is_none_when_no_closed_time(self):
+        m = self._make_closed_market()
+        del m["closedTime"]
+        assert _parse_dt(m.get("closedTime")) is None
+
+
+# ---------------------------------------------------------------------------
+# Fix 2: _gamma_outcome
+# ---------------------------------------------------------------------------
+
+class TestGammaOutcome:
+    """outcomePrices["1","0"] = YES won (1); ["0","1"] = NO won (0); else None."""
+
+    def test_yes_outcome(self):
+        assert _gamma_outcome({"outcomePrices": '["1","0"]'}) == 1
+
+    def test_no_outcome(self):
+        assert _gamma_outcome({"outcomePrices": '["0","1"]'}) == 0
+
+    def test_partial_price_is_none(self):
+        assert _gamma_outcome({"outcomePrices": '["0.5","0.5"]'}) is None
+
+    def test_missing_field_is_none(self):
+        assert _gamma_outcome({}) is None
+
+    def test_list_format(self):
+        # outcomePrices may already be a list (not a string)
+        assert _gamma_outcome({"outcomePrices": ["1", "0"]}) == 1
+        assert _gamma_outcome({"outcomePrices": ["0", "1"]}) == 0
+
+    def test_float_string_tolerance(self):
+        # "1.0" and "0.0" should also work
+        assert _gamma_outcome({"outcomePrices": '["1.0","0.0"]'}) == 1
+        assert _gamma_outcome({"outcomePrices": '["0.0","1.0"]'}) == 0
 
 
 # ---------------------------------------------------------------------------
