@@ -154,12 +154,15 @@ uv run fflow collect subgraph --all-resolved --min-volume 50000 --max-volume 200
 - Markets processed: 737 / 10,602 (6.9%) | Trades: 4,645,272 | Wallets: 374,991 | Indexer skips: 3
 
 **Status as of 2026-04-26 20:28 UTC (324 min in):**
-- Markets processed: 952 / 10,602 (9.0%)
+- Markets processed: 952 / 10,602 (9.0%) | Trades: 5,592,716 | Wallets: 420,533 | Indexer skips: 3
+
+**Status as of 2026-04-26 21:29 UTC (384 min in):**
+- Markets processed: 1,172 / 10,602 (11.1%)
 - bad-indexers skips: 3 (no new ones)
-- Rate: ~3.5 markets/min (↑ still accelerating; vol band ~$854K)
-- Trades in DB: 5,592,716
-- Wallets in DB: 420,533
-- ETA: ~18–22h remaining
+- Rate: ~3.7 markets/min (↑ still accelerating; vol band ~$745K)
+- Trades in DB: 6,447,871
+- Wallets in DB: 468,259
+- ETA: ~15–20h remaining
 
 **Sample markets confirmed working (all successful):**
 | market_id | category | vol | trades |
