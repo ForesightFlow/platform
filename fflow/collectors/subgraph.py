@@ -60,7 +60,7 @@ class SubgraphCollector(BaseCollector):
                 yes_token = await self._resolve_yes_token(session, mid)
                 trades = await self._fetch_trades(mid, yes_token, from_ts)
                 if not dry_run:
-                    result.n_written = await self._upsert_trades(session, mid, yes_token, trades)
+                    result.n_written, result.n_wallets = await self._upsert_trades(session, mid, yes_token, trades)
                 else:
                     result.n_written = len(trades)
                 result.status = "success"
@@ -240,7 +240,7 @@ class SubgraphCollector(BaseCollector):
             await session.commit()
 
         log.info("subgraph_upserted", market=market_id, trades=total, wallets=len(wallet_set))
-        return total
+        return total, len(wallet_set)
 
 
 def _parse_log_index(raw_id: str) -> int:
