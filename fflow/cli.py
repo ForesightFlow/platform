@@ -136,6 +136,47 @@ def collect_subgraph(
             raise typer.Exit(1)
 
 
+def _load_resume_set(progress_path: "pathlib.Path") -> "set[str]":
+    """Return set of market_ids already successfully processed (status == 'ok')."""
+    import json
+    done: set[str] = set()
+    if not progress_path.exists():
+        return done
+    with open(progress_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+                if rec.get("status") == "ok":
+                    done.add(rec["market_id"])
+            except (json.JSONDecodeError, KeyError):
+                pass
+    return done
+
+
+def _write_progress(
+    path: "pathlib.Path",
+    market_id: str,
+    status: str,
+    trades_count: int,
+    wallets_count: int,
+    duration_ms: int,
+) -> None:
+    import json
+    entry = {
+        "market_id": market_id,
+        "status": status,
+        "trades_count": trades_count,
+        "wallets_count": wallets_count,
+        "duration_ms": duration_ms,
+        "ts": datetime.now(UTC).isoformat(),
+    }
+    with open(path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+
 async def _subgraph_batch(
     min_volume: float,
     dry_run: bool,
@@ -143,12 +184,19 @@ async def _subgraph_batch(
     limit: int | None = None,
     categories: list[str] | None = None,
 ) -> None:
-    import json
     import pathlib
+    import time
     from fflow.collectors.subgraph import SubgraphCollector
     from fflow.db import AsyncSessionLocal
     from fflow.models import Market, Trade
     from sqlalchemy import select, func
+
+    progress_path = pathlib.Path("logs/batch_progress.jsonl")
+    progress_path.parent.mkdir(parents=True, exist_ok=True)
+    resume_set = _load_resume_set(progress_path)
+    if resume_set:
+        log.info("subgraph_batch_resume", already_done=len(resume_set))
+        typer.echo(f"resuming: {len(resume_set)} markets already completed in checkpoint")
 
     async with AsyncSessionLocal() as session:
         stmt = (
@@ -172,15 +220,17 @@ async def _subgraph_batch(
     else:
         typer.echo(f"subgraph batch: {total} markets vol>=${min_volume:,.0f}" + (f" (limit={limit})" if limit else "") + (f" categories={categories}" if categories else ""))
 
-    progress_path = pathlib.Path("logs/batch_progress.jsonl")
-    progress_path.parent.mkdir(parents=True, exist_ok=True)
-
     collector = SubgraphCollector()
     stale_cutoff = datetime.now(UTC) - timedelta(days=1)
     ok = fail = skipped = already_done = 0
 
     for mid, vol, resolved_at in rows:
-        # Idempotency: skip markets resolved >1 day ago that already have trades
+        # Resume: skip markets already in checkpoint with status=ok
+        if mid in resume_set:
+            already_done += 1
+            continue
+
+        # Idempotency: skip markets resolved >1 day ago that already have trades in DB
         resolved_is_old = resolved_at and resolved_at < stale_cutoff
         if resolved_is_old and not dry_run:
             async with AsyncSessionLocal() as session:
@@ -189,38 +239,29 @@ async def _subgraph_batch(
                 )
             if existing and existing > 0:
                 already_done += 1
-                log.info("subgraph_batch_skip", market=mid, existing_trades=existing)
-                _write_progress(progress_path, mid, "already_done", existing, float(vol or 0))
+                log.info("subgraph_skip_already_collected", market=mid, existing_trades=existing)
+                _write_progress(progress_path, mid, "ok", existing, 0, 0)
                 continue
 
+        t0 = time.monotonic()
         try:
             r = await collector.run(market_id=mid, dry_run=dry_run)
+            duration_ms = int((time.monotonic() - t0) * 1000)
             if r.n_written and r.n_written > 0:
                 ok += 1
+                _write_progress(progress_path, mid, "ok", r.n_written, r.n_wallets, duration_ms)
             else:
                 skipped += 1
+                _write_progress(progress_path, mid, "skipped", 0, 0, duration_ms)
             log.info("subgraph_batch_market", market=mid, vol=float(vol or 0),
-                     status=r.status, n=r.n_written)
-            _write_progress(progress_path, mid, r.status, r.n_written or 0, float(vol or 0))
+                     status=r.status, n=r.n_written, wallets=r.n_wallets, ms=duration_ms)
         except Exception as exc:
+            duration_ms = int((time.monotonic() - t0) * 1000)
             fail += 1
             log.error("subgraph_batch_error", market=mid, error=str(exc))
-            _write_progress(progress_path, mid, "failed", 0, float(vol or 0))
+            _write_progress(progress_path, mid, "failed", 0, 0, duration_ms)
 
     typer.echo(f"subgraph batch done: ok={ok} skipped(0 trades)={skipped} already_done={already_done} fail={fail}")
-
-
-def _write_progress(path: "pathlib.Path", market_id: str, status: str, trades: int, vol: float) -> None:
-    import json, pathlib
-    entry = {
-        "market_id": market_id,
-        "status": status,
-        "trades_count": trades,
-        "volume": vol,
-        "timestamp": datetime.now(UTC).isoformat(),
-    }
-    with open(path, "a") as f:
-        f.write(json.dumps(entry) + "\n")
 
 
 # ---------------------------------------------------------------------------

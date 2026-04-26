@@ -18,6 +18,7 @@ class CollectorResult(BaseModel):
     collector: str
     target: str | None = None
     n_written: int = 0
+    n_wallets: int = 0
     started_at: datetime
     finished_at: datetime | None = None
     status: str = "running"
