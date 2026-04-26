@@ -1,0 +1,110 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Host:
+      - gamma-api.polymarket.com
+      User-Agent:
+      - python-httpx/0.28.1
+    method: GET
+    uri: https://gamma-api.polymarket.com/markets?limit=1&tag=politics
+  response:
+    body:
+      string: !!binary |
+        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
+        GgAA
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - public, max-age=300
+      cf-cache-status:
+      - EXPIRED
+      cf-ray:
+      - 9f233368eff7b47c-DXB
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Sun, 26 Apr 2026 05:31:22 GMT
+      deprecation:
+      - 'true'
+      expires:
+      - Sun, 26 Apr 2026 05:36:22 GMT
+      last-modified:
+      - Sun, 26 Apr 2026 05:31:22 GMT
+      server:
+      - cloudflare
+      set-cookie:
+      - __cf_bm=_KUpzOI6QoaJQ9RnRiySYObFzWHTPssnQU9qOoo64uo-1777181482.3894308-1.0.1.1-RU1HERsUedk7qEv2lWTcM1pu22MOJy8j9T8tuVGxQ1Lh.qR8b7VobVoO7aXnw9y393N2WxkDJEzeYXv1oIOnaHofVgvh.zV0lXOFBbMw3xmiqMwefycVguqUByb3x.Or;
+        HttpOnly; Secure; Path=/; Domain=polymarket.com; Expires=Sun, 26 Apr 2026
+        06:01:22 GMT
+      strict-transport-security:
+      - max-age=7776000; includeSubDomains
+      sunset:
+      - Fri, 01 May 2026 00:00:00 GMT
+      vary:
+      - Accept-Encoding
+      warning:
+      - 299 - "use /markets/keyset"
+    status:
+      code: 200
+      message: null
+version: 1
