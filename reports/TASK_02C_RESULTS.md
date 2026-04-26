@@ -140,9 +140,14 @@ uv run fflow collect subgraph --all-resolved --min-volume 50000 --max-volume 200
 - Markets processed: 30 / 10,602
 - Trades fetched: 214,292
 - Wallets seeded: 41,293
-- Current rate: ~3 markets/min (near-$2M markets have 10–14K trades = many pages)
-- Rate will increase as volume decreases toward $50K (fewer pages per market)
-- Estimated completion: 20–25 hours (overnight + tomorrow morning)
+
+**Status as of 2026-04-26 16:17 UTC (73 min in):**
+- Markets processed: 189 / 10,602 (1.8%)
+- Errors: 0 (all markets status=success)
+- Rate: ~2.6 markets/min (still in high-volume band ~$1.54M)
+- Trades in DB: 1,403,003 (across all markets)
+- Wallets in DB: 177,227
+- Note: batch_progress.jsonl not written — this batch started before checkpoint feature merged
 
 **Sample markets confirmed working (all successful):**
 | market_id | category | vol | trades |
@@ -153,6 +158,8 @@ uv run fflow collect subgraph --all-resolved --min-volume 50000 --max-volume 200
 | 0x6e932d... | regulatory_decision | $1.99M | 2,046 |
 | 0x26dbea... | military_geopolitics | $1.93M | 3,607 |
 | 0xb9db6e... | military_geopolitics | $1.92M | 14,124 |
+| 0x5f1516... | (TBD) | $1.55M | 14,611 |
+| 0xb9ba10... | (TBD) | $1.55M | 13,290 |
 
 ---
 
