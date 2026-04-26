@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     polygonscan_api_key: str | None = None
     polygonscan_url: str = "https://api.polygonscan.com/api"
 
+    # Anthropic (Tier 3 LLM)
+    anthropic_api_key: str | None = None
+
     # UMA / Polygon RPC
     polygon_rpc_url: str = "https://polygon-rpc.com"
 

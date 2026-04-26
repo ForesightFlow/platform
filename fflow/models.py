@@ -13,7 +13,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 TZ = lambda: DateTime(timezone=True)  # noqa: E731 — each column needs its own instance
@@ -112,3 +112,80 @@ class DataCollectionRun(Base):
     n_records_written: Mapped[int | None] = mapped_column(Integer)
     error_message: Mapped[str | None] = mapped_column(Text)
     run_metadata: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class NewsTimestamp(Base):
+    __tablename__ = "news_timestamps"
+
+    market_id: Mapped[str] = mapped_column(
+        String, ForeignKey("markets.id"), primary_key=True
+    )
+    t_news: Mapped[datetime] = mapped_column(TZ(), nullable=False)
+    tier: Mapped[int] = mapped_column(SmallInteger, nullable=False)  # 1=proposer, 2=GDELT, 3=LLM
+    source_url: Mapped[str | None] = mapped_column(Text)
+    source_publisher: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[Any] = mapped_column(Numeric(3, 2), nullable=True)
+    query_keywords: Mapped[list | None] = mapped_column(ARRAY(Text))
+    notes: Mapped[str | None] = mapped_column(Text)
+    recovered_at: Mapped[datetime] = mapped_column(TZ(), nullable=False)
+    recovered_by_run_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("data_collection_runs.id")
+    )
+
+    __table_args__ = (
+        Index("ix_news_timestamps_tier", "tier"),
+        Index("ix_news_timestamps_confidence", "confidence"),
+    )
+
+
+class MarketLabel(Base):
+    __tablename__ = "market_labels"
+
+    market_id: Mapped[str] = mapped_column(
+        String, ForeignKey("markets.id"), primary_key=True
+    )
+    t_open: Mapped[datetime] = mapped_column(TZ(), nullable=False)
+    t_news: Mapped[datetime] = mapped_column(TZ(), nullable=False)
+    t_resolve: Mapped[datetime] = mapped_column(TZ(), nullable=False)
+    p_open: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
+    p_news: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
+    p_resolve: Mapped[int | None] = mapped_column(SmallInteger)  # 0 or 1
+    delta_pre: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
+    delta_total: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
+    ils: Mapped[Any] = mapped_column(Numeric(10, 6), nullable=True)
+    ils_30min: Mapped[Any] = mapped_column(Numeric(10, 6), nullable=True)
+    ils_2h: Mapped[Any] = mapped_column(Numeric(10, 6), nullable=True)
+    ils_6h: Mapped[Any] = mapped_column(Numeric(10, 6), nullable=True)
+    ils_24h: Mapped[Any] = mapped_column(Numeric(10, 6), nullable=True)
+    ils_7d: Mapped[Any] = mapped_column(Numeric(10, 6), nullable=True)
+    volume_pre_share: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
+    pre_news_max_jump: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
+    wallet_hhi_top10: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
+    time_to_news_top10: Mapped[list | None] = mapped_column(JSONB)
+    n_trades_total: Mapped[int | None] = mapped_column(Integer)
+    n_trades_pre_news: Mapped[int | None] = mapped_column(Integer)
+    category_fflow: Mapped[str | None] = mapped_column(String(100))
+    computed_at: Mapped[datetime | None] = mapped_column(TZ())
+    computed_by_run_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("data_collection_runs.id")
+    )
+    flags: Mapped[list] = mapped_column(ARRAY(Text), nullable=False, default=list)
+
+    __table_args__ = (
+        Index("ix_market_labels_category_fflow", "category_fflow"),
+        Index("ix_market_labels_ils", "ils"),
+        Index("ix_market_labels_volume_pre_share", "volume_pre_share"),
+        Index("ix_market_labels_t_news", "t_news"),
+    )
+
+
+class LabelAudit(Base):
+    __tablename__ = "label_audit"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    market_id: Mapped[str] = mapped_column(String, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    details: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(TZ(), nullable=False)
+
+    __table_args__ = (Index("ix_label_audit_market_id", "market_id"),)

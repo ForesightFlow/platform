@@ -13,10 +13,14 @@ app = typer.Typer(name="fflow", help="ForesightFlow data collection CLI")
 collect_app = typer.Typer(help="Run data collectors")
 taxonomy_app = typer.Typer(help="Market taxonomy operations")
 db_app = typer.Typer(help="Database management")
+news_app = typer.Typer(help="T_news recovery (3-tier hierarchy)")
+score_app = typer.Typer(help="ILS scoring and label computation")
 
 app.add_typer(collect_app, name="collect")
 app.add_typer(taxonomy_app, name="taxonomy")
 app.add_typer(db_app, name="db")
+app.add_typer(news_app, name="news")
+app.add_typer(score_app, name="score")
 
 
 @app.callback()
@@ -205,6 +209,300 @@ def db_migrate() -> None:
     """Run Alembic migrations."""
     import subprocess
     subprocess.run(["alembic", "upgrade", "head"], check=True)
+
+
+# ---------------------------------------------------------------------------
+# news commands
+# ---------------------------------------------------------------------------
+
+@news_app.command("tier1")
+def news_tier1(
+    market: Annotated[str, typer.Option(help="Market condition ID (0x...)")],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    """Tier 1: extract T_news from UMA proposer evidence URL."""
+    from fflow.db import AsyncSessionLocal
+    from fflow.models import Market, NewsTimestamp
+    from fflow.news.proposer_url import fetch_proposer_timestamp
+    from sqlalchemy import select
+
+    async def _run() -> None:
+        async with AsyncSessionLocal() as session:
+            mkt = await session.get(Market, market)
+            if mkt is None:
+                typer.echo(f"Market not found: {market}", err=True)
+                raise typer.Exit(1)
+            url = mkt.resolution_evidence_url
+            if not url:
+                typer.echo("No resolution_evidence_url on this market.")
+                raise typer.Exit(1)
+
+            result = await fetch_proposer_timestamp(url)
+            if result is None:
+                typer.echo("No timestamp extracted from proposer URL.")
+                raise typer.Exit(1)
+
+            typer.echo(f"t_news={result.t_news.isoformat()} confidence={result.confidence}")
+            if dry_run:
+                return
+
+            row = NewsTimestamp(
+                market_id=market,
+                t_news=result.t_news,
+                tier=1,
+                source_url=result.source_url,
+                confidence=result.confidence,
+                recovered_at=datetime.now(UTC),
+            )
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            stmt = (
+                pg_insert(NewsTimestamp)
+                .values(
+                    market_id=market,
+                    t_news=result.t_news,
+                    tier=1,
+                    source_url=result.source_url,
+                    confidence=result.confidence,
+                    recovered_at=datetime.now(UTC),
+                )
+                .on_conflict_do_update(
+                    index_elements=["market_id"],
+                    set_={"t_news": result.t_news, "tier": 1,
+                          "source_url": result.source_url,
+                          "confidence": result.confidence},
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+            typer.echo("Saved.")
+
+    asyncio.run(_run())
+
+
+@news_app.command("tier2")
+def news_tier2(
+    market: Annotated[str, typer.Option(help="Market condition ID (0x...)")],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    """Tier 2: search GDELT BigQuery for T_news. Requires GCP credentials."""
+    from fflow.db import AsyncSessionLocal
+    from fflow.models import Market, NewsTimestamp
+    from fflow.news.gdelt import search_gdelt
+
+    async def _run() -> None:
+        async with AsyncSessionLocal() as session:
+            mkt = await session.get(Market, market)
+            if mkt is None:
+                typer.echo(f"Market not found: {market}", err=True)
+                raise typer.Exit(1)
+
+            result = await search_gdelt(
+                question=mkt.question,
+                t_resolve=mkt.resolved_at or datetime.now(UTC),
+                t_open=mkt.created_at_chain,
+                dry_run=dry_run,
+            )
+            if result is None:
+                typer.echo("No GDELT result (GCP not configured or no match).")
+                raise typer.Exit(1)
+
+            typer.echo(f"t_news={result.t_news.isoformat()} confidence={result.confidence}")
+            typer.echo(f"source={result.source_url}")
+            if dry_run:
+                return
+
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            stmt = (
+                pg_insert(NewsTimestamp)
+                .values(
+                    market_id=market,
+                    t_news=result.t_news,
+                    tier=2,
+                    source_url=result.source_url,
+                    source_publisher=result.source_publisher,
+                    confidence=result.confidence,
+                    query_keywords=result.query_keywords,
+                    recovered_at=datetime.now(UTC),
+                )
+                .on_conflict_do_update(
+                    index_elements=["market_id"],
+                    set_={"t_news": result.t_news, "tier": 2,
+                          "source_url": result.source_url,
+                          "confidence": result.confidence},
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+            typer.echo("Saved.")
+
+    asyncio.run(_run())
+
+
+@news_app.command("tier3")
+def news_tier3(
+    market: Annotated[str, typer.Option(help="Market condition ID (0x...)")],
+    confirm: Annotated[bool, typer.Option("--confirm", help="Acknowledge LLM API cost")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    """Tier 3: use Claude LLM to extract T_news. Requires --confirm."""
+    from fflow.db import AsyncSessionLocal
+    from fflow.models import Market, NewsTimestamp
+    from fflow.news.llm_match import llm_extract_date
+
+    if not confirm and not dry_run:
+        typer.echo("Pass --confirm to acknowledge LLM API cost (~$0.01-0.05 per call).")
+        raise typer.Exit(1)
+
+    async def _run() -> None:
+        async with AsyncSessionLocal() as session:
+            mkt = await session.get(Market, market)
+            if mkt is None:
+                typer.echo(f"Market not found: {market}", err=True)
+                raise typer.Exit(1)
+
+            result = await llm_extract_date(
+                question=mkt.question,
+                description=mkt.description,
+                api_key=settings.anthropic_api_key,
+                confirmed=confirm,
+            )
+            if result is None:
+                typer.echo("LLM returned no date.")
+                raise typer.Exit(1)
+
+            typer.echo(f"t_news={result.t_news.isoformat()} confidence={result.confidence}")
+            typer.echo(f"notes={result.notes}")
+            if dry_run:
+                return
+
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            stmt = (
+                pg_insert(NewsTimestamp)
+                .values(
+                    market_id=market,
+                    t_news=result.t_news,
+                    tier=3,
+                    confidence=result.confidence,
+                    notes=result.notes,
+                    recovered_at=datetime.now(UTC),
+                )
+                .on_conflict_do_update(
+                    index_elements=["market_id"],
+                    set_={"t_news": result.t_news, "tier": 3,
+                          "confidence": result.confidence},
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+            typer.echo("Saved.")
+
+    asyncio.run(_run())
+
+
+@news_app.command("suggest-validation-set")
+def news_suggest_validation_set(
+    limit: Annotated[int, typer.Option(help="Max markets to return")] = 20,
+) -> None:
+    """Suggest markets for manual T_news validation (high-signal categories)."""
+    from fflow.db import AsyncSessionLocal
+    from fflow.models import Market
+    from sqlalchemy import or_, select
+
+    # Keywords that tend to have clear, verifiable news events
+    SIGNAL_KEYWORDS = [
+        "iran", "venezuela", "maduro", "taylor swift",
+        "openai", "fda approval", "rate cut", "year in search",
+        "election", "resign", "arrest", "launch",
+    ]
+
+    async def _run() -> None:
+        async with AsyncSessionLocal() as session:
+            conditions = [
+                Market.question.ilike(f"%{kw}%") for kw in SIGNAL_KEYWORDS
+            ]
+            stmt = (
+                select(Market.id, Market.question, Market.category_fflow,
+                       Market.resolution_outcome)
+                .where(Market.resolution_outcome.isnot(None))
+                .where(or_(*conditions))
+                .limit(limit)
+            )
+            rows = (await session.execute(stmt)).all()
+
+        if not rows:
+            typer.echo("No matching markets found.")
+            return
+
+        typer.echo(f"{'ID':<45} {'Outcome':<8} {'Category':<25} Question")
+        typer.echo("-" * 120)
+        for r in rows:
+            q = (r.question or "")[:60]
+            cat = (r.category_fflow or "")[:24]
+            typer.echo(f"{r.id:<45} {str(r.resolution_outcome):<8} {cat:<25} {q}")
+
+    asyncio.run(_run())
+
+
+# ---------------------------------------------------------------------------
+# score commands
+# ---------------------------------------------------------------------------
+
+@score_app.command("market")
+def score_market(
+    market: Annotated[str, typer.Option(help="Market condition ID (0x...)")],
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    """Compute ILS label for a single market and persist to market_labels."""
+    from fflow.db import AsyncSessionLocal
+    from fflow.scoring.pipeline import compute_market_label
+
+    async def _run() -> None:
+        async with AsyncSessionLocal() as session:
+            label = await compute_market_label(session, market, dry_run=dry_run)
+            if label is None:
+                typer.echo("Label not computed (missing data or prerequisites).")
+                raise typer.Exit(1)
+            typer.echo(f"ILS={label.ils}  flags={label.flags}")
+            if dry_run:
+                typer.echo("[dry-run] not persisted")
+
+    asyncio.run(_run())
+
+
+@score_app.command("batch")
+def score_batch(
+    limit: Annotated[int, typer.Option(help="Max markets to score")] = 500,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    """Compute ILS labels for all markets that have a NewsTimestamp but no label."""
+    from fflow.db import AsyncSessionLocal
+    from fflow.models import MarketLabel, NewsTimestamp
+    from fflow.scoring.pipeline import compute_market_label
+    from sqlalchemy import select
+
+    async def _run() -> None:
+        async with AsyncSessionLocal() as session:
+            # Markets with news but no label yet
+            labelled = select(MarketLabel.market_id)
+            stmt = (
+                select(NewsTimestamp.market_id)
+                .where(NewsTimestamp.market_id.notin_(labelled))
+                .limit(limit)
+            )
+            rows = (await session.execute(stmt)).scalars().all()
+
+        n_ok = n_fail = 0
+        for market_id in rows:
+            async with AsyncSessionLocal() as session:
+                label = await compute_market_label(session, market_id, dry_run=dry_run)
+                if label:
+                    n_ok += 1
+                else:
+                    n_fail += 1
+
+        typer.echo(f"batch: ok={n_ok} skipped={n_fail}")
+
+    asyncio.run(_run())
 
 
 # ---------------------------------------------------------------------------

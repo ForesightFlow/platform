@@ -1,0 +1,25 @@
+# ForesightFlow — Tier 3 Validation Set
+#
+# This file lists markets for which LLM-assisted T_news recovery (Tier 3) is permitted.
+# Tier 3 is NEVER run automatically — it requires: fflow news tier3 --validation-set --confirm
+#
+# To find candidates, run:
+#   fflow news suggest-validation-set
+# Then copy/paste the output entries here after manual review.
+#
+# Schema per entry:
+#   market_id:    str   — Polymarket conditionId (0x...)
+#   label:        str   — human-readable short label (for logging/reports)
+#   category:     str   — one of: military_geopolitics | corporate_disclosure | regulatory_decision
+#   known_case:   bool  — true if this is a publicly documented insider-trading case
+#   notes:        str   — optional context for the LLM prompt
+#
+# Example (do not uncomment — replace with real data):
+# markets:
+#   - market_id: "0xabcdef..."
+#     label: "US Strike on Iran Feb 2026"
+#     category: military_geopolitics
+#     known_case: true
+#     notes: "Evidence URL from UMA proposer likely points to Reuters. T_news ~Feb 28 2026."
+
+markets: []
