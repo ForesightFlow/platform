@@ -600,6 +600,157 @@ def news_suggest_validation_set(
     asyncio.run(_run())
 
 
+@news_app.command("tier1-batch")
+def news_tier1_batch(
+    limit: Annotated[int, typer.Option(help="Max markets to process")] = 500,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    """Batch Tier 1: extract T_news from resolution_evidence_url for all eligible markets."""
+    from fflow.db import AsyncSessionLocal
+    from fflow.models import Market, NewsTimestamp
+    from fflow.news.proposer_url import fetch_proposer_timestamp
+    from sqlalchemy import select
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    async def _run() -> None:
+        async with AsyncSessionLocal() as session:
+            already_done_sq = select(NewsTimestamp.market_id).where(NewsTimestamp.tier == 1)
+            stmt = (
+                select(Market.id, Market.resolution_evidence_url)
+                .where(Market.resolution_evidence_url.isnot(None))
+                .where(Market.id.notin_(already_done_sq))
+                .limit(limit)
+            )
+            rows = (await session.execute(stmt)).all()
+
+        typer.echo(f"tier1-batch: {len(rows)} markets to process")
+        ok = skip = fail = 0
+        for market_id, url in rows:
+            try:
+                result = await fetch_proposer_timestamp(url)
+            except Exception as exc:
+                fail += 1
+                log.warning("tier1_batch_error", market=market_id, error=str(exc))
+                continue
+
+            if result is None:
+                skip += 1
+                continue
+
+            if not dry_run:
+                async with AsyncSessionLocal() as session:
+                    stmt = (
+                        pg_insert(NewsTimestamp)
+                        .values(
+                            market_id=market_id,
+                            t_news=result.t_news,
+                            tier=1,
+                            source_url=result.source_url,
+                            confidence=result.confidence,
+                            recovered_at=datetime.now(UTC),
+                        )
+                        .on_conflict_do_update(
+                            index_elements=["market_id"],
+                            set_={
+                                "t_news": result.t_news,
+                                "tier": 1,
+                                "source_url": result.source_url,
+                                "confidence": result.confidence,
+                            },
+                        )
+                    )
+                    await session.execute(stmt)
+                    await session.commit()
+            ok += 1
+            if ok % 50 == 0:
+                typer.echo(f"  progress: ok={ok} skip={skip} fail={fail}")
+
+        typer.echo(f"tier1-batch done: ok={ok} skip={skip} fail={fail}")
+
+    asyncio.run(_run())
+
+
+@news_app.command("seed-proxy")
+def news_seed_proxy(
+    market_ids: Annotated[Optional[str], typer.Option(help="Comma-separated market IDs")] = None,
+    category: Annotated[Optional[str], typer.Option(help="Seed all markets in this category_fflow")] = None,
+    offset_days: Annotated[int, typer.Option(help="Days before end_date for proxy T_news")] = 1,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    """Seed synthetic T_news proxy from end_date - offset_days (tier=2, confidence=0.50).
+
+    Used for markets resolved by Polymarket admin (no UMA evidence URL) where
+    the outcome was publicly knowable close to end_date.
+    """
+    from fflow.db import AsyncSessionLocal
+    from fflow.models import Market, NewsTimestamp
+    from sqlalchemy import select
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    async def _run() -> None:
+        if market_ids:
+            ids = [m.strip() for m in market_ids.split(",") if m.strip()]
+        elif category:
+            async with AsyncSessionLocal() as session:
+                rows = (
+                    await session.execute(
+                        select(Market.id).where(Market.category_fflow == category)
+                        .where(Market.end_date.isnot(None))
+                        .where(Market.resolved_at.isnot(None))
+                    )
+                ).scalars().all()
+            ids = list(rows)
+        else:
+            typer.echo("Provide --market-ids or --category", err=True)
+            raise typer.Exit(1)
+
+        typer.echo(f"seed-proxy: {len(ids)} markets, offset={offset_days}d")
+        ok = skip = 0
+        async with AsyncSessionLocal() as session:
+            for mid in ids:
+                mkt = await session.get(Market, mid)
+                if mkt is None or mkt.end_date is None:
+                    skip += 1
+                    continue
+
+                t_news = mkt.end_date - timedelta(days=offset_days)
+                notes = f"proxy:end_date-{offset_days}d"
+
+                if not dry_run:
+                    stmt = (
+                        pg_insert(NewsTimestamp)
+                        .values(
+                            market_id=mid,
+                            t_news=t_news,
+                            tier=2,
+                            source_url=None,
+                            confidence=0.50,
+                            notes=notes,
+                            recovered_at=datetime.now(UTC),
+                        )
+                        .on_conflict_do_update(
+                            index_elements=["market_id"],
+                            set_={
+                                "t_news": t_news,
+                                "tier": 2,
+                                "confidence": 0.50,
+                                "notes": notes,
+                            },
+                        )
+                    )
+                    await session.execute(stmt)
+                else:
+                    typer.echo(f"  [dry-run] {mid[:12]}…  t_news={t_news.isoformat()}")
+                ok += 1
+
+            if not dry_run:
+                await session.commit()
+
+        typer.echo(f"seed-proxy done: ok={ok} skip={skip}")
+
+    asyncio.run(_run())
+
+
 # ---------------------------------------------------------------------------
 # score commands
 # ---------------------------------------------------------------------------
