@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
 
     # UMA / Polygon RPC
-    polygon_rpc_url: str = "https://polygon-rpc.com"
+    polygon_rpc_url: str = "https://1rpc.io/matic"
 
     # HTTP tuning
     http_timeout_seconds: float = 30.0

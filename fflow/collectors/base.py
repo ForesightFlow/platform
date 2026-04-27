@@ -37,6 +37,9 @@ class RetryableHTTPClient:
     async def get(self, url: str, **kwargs) -> httpx.Response:
         return await self._request("GET", url, **kwargs)
 
+    async def post(self, url: str, **kwargs) -> httpx.Response:
+        return await self._request("POST", url, **kwargs)
+
     async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
         last_exc: Exception | None = None
         for attempt in range(settings.http_max_retries + 1):
