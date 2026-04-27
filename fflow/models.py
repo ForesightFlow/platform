@@ -42,11 +42,13 @@ class Market(Base):
     slug: Mapped[str | None] = mapped_column(String(500), unique=True)
     raw_metadata: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
     last_refreshed_at: Mapped[datetime] = mapped_column(TZ(), nullable=False)
+    resolution_type: Mapped[str | None] = mapped_column(String(30))  # deadline_resolved | unclassifiable
 
     __table_args__ = (
         Index("ix_markets_category_fflow", "category_fflow"),
         Index("ix_markets_resolved_at", "resolved_at"),
         Index("ix_markets_created_at_chain", "created_at_chain"),
+        Index("ix_markets_resolution_type", "resolution_type"),
     )
 
 
@@ -165,6 +167,7 @@ class MarketLabel(Base):
     n_trades_total: Mapped[int | None] = mapped_column(Integer)
     n_trades_pre_news: Mapped[int | None] = mapped_column(Integer)
     category_fflow: Mapped[str | None] = mapped_column(String(100))
+    resolution_type: Mapped[str | None] = mapped_column(String(30))  # denorm from markets
     computed_at: Mapped[datetime | None] = mapped_column(TZ())
     computed_by_run_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("data_collection_runs.id")
@@ -176,6 +179,7 @@ class MarketLabel(Base):
         Index("ix_market_labels_ils", "ils"),
         Index("ix_market_labels_volume_pre_share", "volume_pre_share"),
         Index("ix_market_labels_t_news", "t_news"),
+        Index("ix_market_labels_resolution_type", "resolution_type"),
     )
 
 

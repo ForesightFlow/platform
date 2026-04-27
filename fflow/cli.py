@@ -184,6 +184,28 @@ def taxonomy_classify(
     typer.echo(f"classify: classified {n} markets")
 
 
+@taxonomy_app.command("classify-type")
+def taxonomy_classify_type(
+    limit: Annotated[int, typer.Option(help="Max markets to classify per run")] = 10_000,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    """Populate resolution_type (deadline_resolved / unclassifiable) for markets where NULL.
+
+    Logs WARNING for any market where the deadline pattern matched only in the
+    description field — these are candidates for manual review.
+    Run repeatedly until '0 markets classified' to backfill the full corpus.
+    """
+    from fflow.taxonomy.classifier import classify_type_batch
+
+    counts = asyncio.run(classify_type_batch(limit=limit, dry_run=dry_run))
+    if not counts:
+        typer.echo("classify-type: nothing to classify")
+        return
+    total = sum(counts.values())
+    parts = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
+    typer.echo(f"classify-type: {total} markets classified ({parts})")
+
+
 # ---------------------------------------------------------------------------
 # db commands
 # ---------------------------------------------------------------------------
@@ -474,25 +496,51 @@ def score_batch(
     limit: Annotated[int, typer.Option(help="Max markets to score")] = 500,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
 ) -> None:
-    """Compute ILS labels for all markets that have a NewsTimestamp but no label."""
+    """Compute ILS labels for unlabeled markets.
+
+    Includes two candidate pools:
+      1. deadline_resolved markets with price data (no T_news required)
+      2. Markets with a NewsTimestamp (standard path)
+    """
     from fflow.db import AsyncSessionLocal
-    from fflow.models import MarketLabel, NewsTimestamp
+    from fflow.models import Market, MarketLabel, NewsTimestamp, Price
     from fflow.scoring.pipeline import compute_market_label
-    from sqlalchemy import select
+    from sqlalchemy import select, union
 
     async def _run() -> None:
         async with AsyncSessionLocal() as session:
-            # Markets with news but no label yet
             labelled = select(MarketLabel.market_id)
-            stmt = (
+
+            # Pool 1: deadline_resolved with prices, not yet labelled
+            deadline_q = (
+                select(Market.id)
+                .where(Market.resolution_type == "deadline_resolved")
+                .where(Market.resolved_at.isnot(None))
+                .where(Market.resolution_outcome.isnot(None))
+                .where(
+                    Market.id.in_(
+                        select(Price.market_id).distinct()
+                    )
+                )
+                .where(Market.id.notin_(labelled))
+                .limit(limit)
+            )
+
+            # Pool 2: markets with NewsTimestamp, not yet labelled
+            news_q = (
                 select(NewsTimestamp.market_id)
                 .where(NewsTimestamp.market_id.notin_(labelled))
                 .limit(limit)
             )
-            rows = (await session.execute(stmt)).scalars().all()
+
+            deadline_ids = (await session.execute(deadline_q)).scalars().all()
+            news_ids = (await session.execute(news_q)).scalars().all()
+
+        # Deduplicate across pools
+        all_ids = list(dict.fromkeys(list(deadline_ids) + list(news_ids)))[:limit]
 
         n_ok = n_fail = 0
-        for market_id in rows:
+        for market_id in all_ids:
             async with AsyncSessionLocal() as session:
                 label = await compute_market_label(session, market_id, dry_run=dry_run)
                 if label:
@@ -500,7 +548,7 @@ def score_batch(
                 else:
                     n_fail += 1
 
-        typer.echo(f"batch: ok={n_ok} skipped={n_fail}")
+        typer.echo(f"batch: ok={n_ok} skipped={n_fail} (deadline_candidates={len(deadline_ids)}, news_candidates={len(news_ids)})")
 
     asyncio.run(_run())
 

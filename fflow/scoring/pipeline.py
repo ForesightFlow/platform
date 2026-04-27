@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fflow.models import LabelAudit, Market, MarketLabel, NewsTimestamp, Price
-from fflow.scoring.ils import compute_ils
+from fflow.scoring.ils import _DEADLINE_LOOKBACK, compute_ils, compute_ils_deadline
 from fflow.scoring.volume import compute_volume_features
 from fflow.scoring.wallet_features import compute_wallet_features
 
@@ -54,23 +54,9 @@ async def compute_market_label(
         logger.warning("missing_timestamps", t_open=t_open, t_resolve=t_resolve)
         return None
 
-    # Load best available T_news (lowest tier = highest confidence)
-    news_row = (
-        await session.execute(
-            select(NewsTimestamp)
-            .where(NewsTimestamp.market_id == market_id)
-            .order_by(NewsTimestamp.tier, NewsTimestamp.confidence.desc())
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    resolution_type = market.resolution_type  # None = not yet classified
 
-    if news_row is None:
-        logger.info("no_news_timestamp")
-        return None
-
-    t_news = news_row.t_news
-
-    # Load price series
+    # Load price series (needed for both paths)
     price_rows = (
         await session.execute(
             select(Price.ts, Price.mid_price)
@@ -87,20 +73,45 @@ async def compute_market_label(
 
     prices = pd.DataFrame([{"ts": r.ts, "mid_price": r.mid_price} for r in price_rows])
 
-    # Compute ILS
-    ils_bundle = compute_ils(
-        prices=prices,
-        t_open=t_open,
-        t_news=t_news,
-        t_resolve=t_resolve,
-        p_resolve=p_resolve,
-    )
+    # --- Branch on resolution_type -------------------------------------------
+    if resolution_type == "deadline_resolved":
+        # Deadline path: no T_news required; use T_resolve - lookback as reference
+        ils_bundle = compute_ils_deadline(
+            prices=prices,
+            t_open=t_open,
+            t_resolve=t_resolve,
+            p_resolve=p_resolve,
+        )
+        t_news = t_resolve - _DEADLINE_LOOKBACK  # synthetic reference for label row
+        news_row = None
+        vol = await compute_volume_features(session, market_id, t_news, t_resolve)
+        wallet = await compute_wallet_features(session, market_id, t_news, p_resolve)
 
-    # Compute volume features
-    vol = await compute_volume_features(session, market_id, t_news, t_resolve)
+    else:
+        # Standard path: requires NewsTimestamp (Tier 1/2/3)
+        news_row = (
+            await session.execute(
+                select(NewsTimestamp)
+                .where(NewsTimestamp.market_id == market_id)
+                .order_by(NewsTimestamp.tier, NewsTimestamp.confidence.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
 
-    # Compute wallet features
-    wallet = await compute_wallet_features(session, market_id, t_news, p_resolve)
+        if news_row is None:
+            logger.info("no_news_timestamp")
+            return None
+
+        t_news = news_row.t_news
+        ils_bundle = compute_ils(
+            prices=prices,
+            t_open=t_open,
+            t_news=t_news,
+            t_resolve=t_resolve,
+            p_resolve=p_resolve,
+        )
+        vol = await compute_volume_features(session, market_id, t_news, t_resolve)
+        wallet = await compute_wallet_features(session, market_id, t_news, p_resolve)
 
     computed_at = datetime.now(UTC)
 
@@ -127,6 +138,7 @@ async def compute_market_label(
         "wallet_hhi_top10": wallet["wallet_hhi_top10"],
         "time_to_news_top10": wallet["time_to_news_top10"],
         "category_fflow": market.category_fflow,
+        "resolution_type": resolution_type,
         "computed_at": computed_at,
         "flags": ils_bundle.flags,
     }
@@ -155,7 +167,8 @@ async def compute_market_label(
         details={
             "ils": str(ils_bundle.ils),
             "flags": ils_bundle.flags,
-            "t_news_tier": news_row.tier,
+            "resolution_type": resolution_type,
+            "t_news_tier": news_row.tier if news_row else None,
         },
         created_at=computed_at,
     )
@@ -166,6 +179,7 @@ async def compute_market_label(
         "label_written",
         ils=str(ils_bundle.ils),
         flags=ils_bundle.flags,
-        t_news_tier=news_row.tier,
+        resolution_type=resolution_type,
+        t_news_tier=news_row.tier if news_row else None,
     )
     return label

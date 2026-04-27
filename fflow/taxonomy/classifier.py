@@ -97,3 +97,72 @@ async def classify_batch(limit: int = 1000, dry_run: bool = False) -> int:
             counts[u["cat"]] = counts.get(u["cat"], 0) + 1
         log.info("taxonomy_classified", n=len(updates), **counts)
         return len(updates)
+
+
+async def classify_type_batch(
+    limit: int = 10_000,
+    dry_run: bool = False,
+) -> dict[str, int]:
+    """Populate markets.resolution_type for rows where it is NULL.
+
+    Logs a WARNING for each market where the deadline pattern matched only in
+    the description (not the question) — these are potential false positives
+    worth auditing (per user note from Phase 0 review).
+
+    Returns counts by resolution_type.
+    """
+    from fflow.scoring.resolution_type import classify_resolution_type_detailed
+
+    async with AsyncSessionLocal() as session:
+        rows = await session.execute(
+            select(Market.id, Market.question, Market.description)
+            .where(Market.resolution_type.is_(None))
+            .limit(limit)
+        )
+        markets = rows.all()
+
+    if not markets:
+        log.info("classify_type_nothing_to_classify")
+        return {}
+
+    updates: list[dict] = []
+    counts: dict[str, int] = {}
+    n_desc_only = 0
+
+    for market_id, question, description in markets:
+        rtype, desc_only = classify_resolution_type_detailed(question or "", description)
+        updates.append({"id": market_id, "rtype": rtype})
+        counts[rtype] = counts.get(rtype, 0) + 1
+        if desc_only:
+            n_desc_only += 1
+            log.warning(
+                "description_only_deadline",
+                market_id=market_id,
+                question=(question or "")[:120],
+            )
+
+    if not dry_run:
+        # Group ids by type and use IN-clause updates for performance.
+        # Avoids 900K individual UPDATEs when backfilling the full corpus.
+        by_type: dict[str, list[str]] = {}
+        for u in updates:
+            by_type.setdefault(u["rtype"], []).append(u["id"])
+
+        async with AsyncSessionLocal() as session:
+            _CHUNK = 10_000
+            for rtype, ids in by_type.items():
+                for i in range(0, len(ids), _CHUNK):
+                    await session.execute(
+                        update(Market)
+                        .where(Market.id.in_(ids[i : i + _CHUNK]))
+                        .values(resolution_type=rtype)
+                    )
+            await session.commit()
+
+    log.info(
+        "classify_type_done",
+        n=len(updates),
+        description_only_warnings=n_desc_only,
+        **counts,
+    )
+    return counts
