@@ -209,7 +209,8 @@ class SubgraphCollector(BaseCollector):
             total += len(chunk)
         await session.commit()
 
-        # upsert wallets
+        # upsert wallets — chunked (PostgreSQL param limit: 32767; 3 cols × 10000 = 30000)
+        wallet_chunk_size = 10_000
         if wallet_set:
             wallet_rows = [
                 {
@@ -219,24 +220,26 @@ class SubgraphCollector(BaseCollector):
                 }
                 for addr, ts in wallet_set.items()
             ]
-            wallet_stmt = (
-                insert(Wallet)
-                .values(wallet_rows)
-                .on_conflict_do_update(
-                    index_elements=["address"],
-                    set_={
-                        "first_seen_polymarket_at": insert(Wallet).excluded.first_seen_polymarket_at,
-                    },
-                    where=(
-                        Wallet.first_seen_polymarket_at.is_(None)
-                        | (
-                            Wallet.first_seen_polymarket_at
-                            > insert(Wallet).excluded.first_seen_polymarket_at
-                        )
-                    ),
+            for i in range(0, len(wallet_rows), wallet_chunk_size):
+                chunk = wallet_rows[i : i + wallet_chunk_size]
+                wallet_stmt = (
+                    insert(Wallet)
+                    .values(chunk)
+                    .on_conflict_do_update(
+                        index_elements=["address"],
+                        set_={
+                            "first_seen_polymarket_at": insert(Wallet).excluded.first_seen_polymarket_at,
+                        },
+                        where=(
+                            Wallet.first_seen_polymarket_at.is_(None)
+                            | (
+                                Wallet.first_seen_polymarket_at
+                                > insert(Wallet).excluded.first_seen_polymarket_at
+                            )
+                        ),
+                    )
                 )
-            )
-            await session.execute(wallet_stmt)
+                await session.execute(wallet_stmt)
             await session.commit()
 
         log.info("subgraph_upserted", market=market_id, trades=total, wallets=len(wallet_set))
