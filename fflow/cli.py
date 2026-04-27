@@ -682,47 +682,62 @@ def news_tier1_batch(
 def news_seed_proxy(
     market_ids: Annotated[Optional[str], typer.Option(help="Comma-separated market IDs")] = None,
     category: Annotated[Optional[str], typer.Option(help="Seed all markets in this category_fflow")] = None,
-    offset_days: Annotated[int, typer.Option(help="Days before end_date for proxy T_news")] = 1,
+    resolution_type: Annotated[Optional[str], typer.Option(help="Filter by resolution_type")] = None,
+    min_volume: Annotated[float, typer.Option(help="Min volume_total_usdc filter")] = 0.0,
+    offset_days: Annotated[int, typer.Option(help="Days offset for proxy T_news")] = 1,
+    anchor: Annotated[str, typer.Option(help="Anchor for proxy: 'end_date' or 'resolved_at'")] = "end_date",
+    confidence: Annotated[float, typer.Option(help="Confidence value to store")] = 0.50,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
 ) -> None:
-    """Seed synthetic T_news proxy from end_date - offset_days (tier=2, confidence=0.50).
+    """Seed synthetic T_news proxy from anchor - offset_days (tier=2).
 
-    Used for markets resolved by Polymarket admin (no UMA evidence URL) where
-    the outcome was publicly knowable close to end_date.
+    --anchor end_date:    t_news = end_date - offset_days (use for deadline markets)
+    --anchor resolved_at: t_news = resolved_at - offset_days (use for event markets;
+                          resolved_at is close to the actual outcome event)
     """
+    from sqlalchemy import select
+
     from fflow.db import AsyncSessionLocal
     from fflow.models import Market, NewsTimestamp
-    from sqlalchemy import select
     from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    if anchor not in ("end_date", "resolved_at"):
+        typer.echo("--anchor must be 'end_date' or 'resolved_at'", err=True)
+        raise typer.Exit(1)
 
     async def _run() -> None:
         if market_ids:
             ids = [m.strip() for m in market_ids.split(",") if m.strip()]
-        elif category:
-            async with AsyncSessionLocal() as session:
-                rows = (
-                    await session.execute(
-                        select(Market.id).where(Market.category_fflow == category)
-                        .where(Market.end_date.isnot(None))
-                        .where(Market.resolved_at.isnot(None))
-                    )
-                ).scalars().all()
-            ids = list(rows)
         else:
-            typer.echo("Provide --market-ids or --category", err=True)
-            raise typer.Exit(1)
+            async with AsyncSessionLocal() as session:
+                stmt = select(Market.id).where(Market.resolved_at.isnot(None))
+                if category:
+                    stmt = stmt.where(Market.category_fflow == category)
+                if resolution_type:
+                    stmt = stmt.where(Market.resolution_type == resolution_type)
+                if min_volume > 0:
+                    stmt = stmt.where(Market.volume_total_usdc >= min_volume)
+                if anchor == "end_date":
+                    stmt = stmt.where(Market.end_date.isnot(None))
+                rows = (await session.execute(stmt)).scalars().all()
+            ids = list(rows)
 
-        typer.echo(f"seed-proxy: {len(ids)} markets, offset={offset_days}d")
+        typer.echo(f"seed-proxy: {len(ids)} markets, anchor={anchor}, offset={offset_days}d")
         ok = skip = 0
         async with AsyncSessionLocal() as session:
             for mid in ids:
                 mkt = await session.get(Market, mid)
-                if mkt is None or mkt.end_date is None:
+                if mkt is None:
                     skip += 1
                     continue
 
-                t_news = mkt.end_date - timedelta(days=offset_days)
-                notes = f"proxy:end_date-{offset_days}d"
+                anchor_ts = mkt.resolved_at if anchor == "resolved_at" else mkt.end_date
+                if anchor_ts is None:
+                    skip += 1
+                    continue
+
+                t_news = anchor_ts - timedelta(days=offset_days)
+                notes = f"proxy:{anchor}-{offset_days}d"
 
                 if not dry_run:
                     stmt = (
@@ -732,7 +747,7 @@ def news_seed_proxy(
                             t_news=t_news,
                             tier=2,
                             source_url=None,
-                            confidence=0.50,
+                            confidence=confidence,
                             notes=notes,
                             recovered_at=datetime.now(UTC),
                         )
@@ -741,7 +756,7 @@ def news_seed_proxy(
                             set_={
                                 "t_news": t_news,
                                 "tier": 2,
-                                "confidence": 0.50,
+                                "confidence": confidence,
                                 "notes": notes,
                             },
                         )
@@ -848,23 +863,27 @@ def score_classify_types(
 @score_app.command("batch")
 def score_batch(
     limit: Annotated[int, typer.Option(help="Max markets to score")] = 500,
+    resolution_type: Annotated[Optional[str], typer.Option(help="Filter by resolution_type")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
 ) -> None:
     """Compute ILS labels for all markets that have a NewsTimestamp but no label."""
-    from fflow.db import AsyncSessionLocal
-    from fflow.models import MarketLabel, NewsTimestamp
-    from fflow.scoring.pipeline import compute_market_label
     from sqlalchemy import select
+
+    from fflow.db import AsyncSessionLocal
+    from fflow.models import Market, MarketLabel, NewsTimestamp
+    from fflow.scoring.pipeline import compute_market_label
 
     async def _run() -> None:
         async with AsyncSessionLocal() as session:
-            # Markets with news but no label yet
             labelled = select(MarketLabel.market_id)
             stmt = (
                 select(NewsTimestamp.market_id)
+                .join(Market, Market.id == NewsTimestamp.market_id)
                 .where(NewsTimestamp.market_id.notin_(labelled))
-                .limit(limit)
             )
+            if resolution_type:
+                stmt = stmt.where(Market.resolution_type == resolution_type)
+            stmt = stmt.limit(limit)
             rows = (await session.execute(stmt)).scalars().all()
 
         n_ok = n_fail = 0
