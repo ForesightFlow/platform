@@ -777,6 +777,66 @@ def score_market(
     asyncio.run(_run())
 
 
+@score_app.command("classify-types")
+def score_classify_types(
+    min_volume: Annotated[float, typer.Option(help="Min volume_total_usdc")] = 50000.0,
+    categories: Annotated[Optional[str], typer.Option(help="Comma-separated category_fflow filter")] = None,
+    limit: Annotated[Optional[int], typer.Option(help="Max markets to classify")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+) -> None:
+    """Classify resolution_type for all resolved markets with sufficient volume."""
+    from sqlalchemy import select, update
+
+    from fflow.db import AsyncSessionLocal
+    from fflow.models import Market
+    from fflow.scoring.resolution_type import classify_from_text
+
+    cats = [c.strip() for c in categories.split(",")] if categories else None
+
+    async def _run() -> None:
+        async with AsyncSessionLocal() as session:
+            stmt = (
+                select(
+                    Market.id,
+                    Market.question,
+                    Market.resolution_outcome,
+                )
+                .where(Market.resolution_outcome.isnot(None))
+                .where(Market.volume_total_usdc >= min_volume)
+            )
+            if cats:
+                stmt = stmt.where(Market.category_fflow.in_(cats))
+            if limit:
+                stmt = stmt.limit(limit)
+            rows = (await session.execute(stmt)).all()
+
+        typer.echo(f"classify-types: {len(rows)} markets to classify")
+        counts: dict[str, int] = {}
+        ok = 0
+
+        for batch_start in range(0, len(rows), 500):
+            batch = rows[batch_start : batch_start + 500]
+            async with AsyncSessionLocal() as session:
+                for mid, question, outcome in batch:
+                    rt = classify_from_text(question=question, resolution_outcome=outcome, last_price=None)
+                    counts[rt] = counts.get(rt, 0) + 1
+                    if not dry_run:
+                        await session.execute(
+                            update(Market).where(Market.id == mid).values(resolution_type=rt)
+                        )
+                        ok += 1
+                if not dry_run:
+                    await session.commit()
+
+        typer.echo("Distribution: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
+        if dry_run:
+            typer.echo("[dry-run] no writes")
+        else:
+            typer.echo(f"classify-types done: {ok} updated")
+
+    asyncio.run(_run())
+
+
 @score_app.command("batch")
 def score_batch(
     limit: Annotated[int, typer.Option(help="Max markets to score")] = 500,

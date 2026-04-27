@@ -35,6 +35,7 @@ class Market(Base):
     end_date: Mapped[datetime | None] = mapped_column(TZ())
     resolved_at: Mapped[datetime | None] = mapped_column(TZ())  # T_resolve
     resolution_outcome: Mapped[int | None] = mapped_column(Integer)  # 0=NO, 1=YES
+    resolution_type: Mapped[str | None] = mapped_column(String(50))
     resolution_evidence_url: Mapped[str | None] = mapped_column(Text)
     resolution_proposer: Mapped[str | None] = mapped_column(String(42))
     volume_total_usdc: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=True)
