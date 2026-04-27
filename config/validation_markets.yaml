@@ -22,4 +22,15 @@
 #     known_case: true
 #     notes: "Evidence URL from UMA proposer likely points to Reuters. T_news ~Feb 28 2026."
 
-markets: []
+markets:
+  - market_id: "0xfa1543cdef36d55ef9126aaab6015c7c7ed5aa6a2bb5be355f5cacc2302c7374"
+    label: "Epstein files — Ehud Barak"
+    category: military_geopolitics
+    known_case: false
+    notes: >
+      Epstein files released in two waves: Dec 18 2025 (House Oversight Committee
+      released 68 estate photos including Barak photo — first public mention) and
+      Dec 19 2025 (DOJ main release per Epstein Files Transparency Act deadline).
+      Barak photo confirmed by CNN, Al Jazeera, Times of Israel all dated 2025-12-18.
+      Market resolved YES Dec 23 2025 when additional DOJ docs (11K+) confirmed mention.
+      T_news candidate: 2025-12-18T18:00:00Z (afternoon EST photo release).

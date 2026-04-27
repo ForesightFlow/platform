@@ -505,11 +505,19 @@ def news_tier2(
 
 @news_app.command("tier3")
 def news_tier3(
-    market: Annotated[str, typer.Option(help="Market condition ID (0x...)")],
+    market: Annotated[str | None, typer.Option(help="Market condition ID (0x...)")] = None,
+    validation_set: Annotated[bool, typer.Option("--validation-set", help="Process all markets in config/validation_markets.yaml")] = False,
     confirm: Annotated[bool, typer.Option("--confirm", help="Acknowledge LLM API cost")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    max_cost: Annotated[float, typer.Option("--max-cost", help="Hard cost cap in USD (approximate)")] = 5.0,
 ) -> None:
-    """Tier 3: use Claude LLM to extract T_news. Requires --confirm."""
+    """Tier 3: use Claude LLM to extract T_news. Requires --confirm.
+
+    Run on a single market (--market 0x...) or on all entries in
+    config/validation_markets.yaml (--validation-set).
+    """
+    import pathlib
+    import yaml
     from fflow.db import AsyncSessionLocal
     from fflow.models import Market, NewsTimestamp
     from fflow.news.llm_match import llm_extract_date
@@ -518,48 +526,80 @@ def news_tier3(
         typer.echo("Pass --confirm to acknowledge LLM API cost (~$0.01-0.05 per call).")
         raise typer.Exit(1)
 
+    if not market and not validation_set:
+        typer.echo("Provide --market 0x... or --validation-set.", err=True)
+        raise typer.Exit(1)
+
+    # Build list of (market_id, extra_notes) to process
+    targets: list[tuple[str, str]] = []
+    if market:
+        targets.append((market, ""))
+    if validation_set:
+        yaml_path = pathlib.Path("config/validation_markets.yaml")
+        if not yaml_path.exists():
+            typer.echo(f"Not found: {yaml_path}", err=True)
+            raise typer.Exit(1)
+        data = yaml.safe_load(yaml_path.read_text())
+        for entry in data.get("markets", []):
+            targets.append((entry["market_id"], entry.get("notes", "")))
+        typer.echo(f"Loaded {len(targets)} markets from {yaml_path}")
+
+    # Rough cost guard: $0.002 per call estimate for Haiku
+    _COST_PER_CALL = 0.002
+    if len(targets) * _COST_PER_CALL > max_cost:
+        typer.echo(
+            f"Estimated cost ${len(targets) * _COST_PER_CALL:.2f} exceeds --max-cost ${max_cost}. "
+            f"Reduce markets or raise --max-cost."
+        )
+        raise typer.Exit(1)
+
     async def _run() -> None:
-        async with AsyncSessionLocal() as session:
-            mkt = await session.get(Market, market)
-            if mkt is None:
-                typer.echo(f"Market not found: {market}", err=True)
-                raise typer.Exit(1)
+        for market_id, extra_notes in targets:
+            async with AsyncSessionLocal() as session:
+                mkt = await session.get(Market, market_id)
+                if mkt is None:
+                    typer.echo(f"Market not found: {market_id}", err=True)
+                    continue
 
-            result = await llm_extract_date(
-                question=mkt.question,
-                description=mkt.description,
-                api_key=settings.anthropic_api_key,
-                confirmed=confirm,
-            )
-            if result is None:
-                typer.echo("LLM returned no date.")
-                raise typer.Exit(1)
-
-            typer.echo(f"t_news={result.t_news.isoformat()} confidence={result.confidence}")
-            typer.echo(f"notes={result.notes}")
-            if dry_run:
-                return
-
-            from sqlalchemy.dialects.postgresql import insert as pg_insert
-            stmt = (
-                pg_insert(NewsTimestamp)
-                .values(
-                    market_id=market,
-                    t_news=result.t_news,
-                    tier=3,
-                    confidence=result.confidence,
-                    notes=result.notes,
-                    recovered_at=datetime.now(UTC),
+                result = await llm_extract_date(
+                    question=mkt.question,
+                    description=mkt.description,
+                    api_key=settings.anthropic_api_key,
+                    confirmed=confirm,
+                    extra_context=extra_notes,
                 )
-                .on_conflict_do_update(
-                    index_elements=["market_id"],
-                    set_={"t_news": result.t_news, "tier": 3,
-                          "confidence": result.confidence},
+                if result is None:
+                    typer.echo(f"[{market_id[:10]}] LLM returned no date.")
+                    continue
+
+                typer.echo(
+                    f"[{market_id[:10]}] t_news={result.t_news.isoformat()} "
+                    f"confidence={result.confidence:.2f} notes={result.notes}"
                 )
-            )
-            await session.execute(stmt)
-            await session.commit()
-            typer.echo("Saved.")
+                if dry_run:
+                    continue
+
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+                stmt = (
+                    pg_insert(NewsTimestamp)
+                    .values(
+                        market_id=market_id,
+                        t_news=result.t_news,
+                        tier=3,
+                        confidence=result.confidence,
+                        notes=result.notes,
+                        recovered_at=datetime.now(UTC),
+                    )
+                    .on_conflict_do_update(
+                        index_elements=["market_id"],
+                        set_={"t_news": result.t_news, "tier": 3,
+                              "confidence": result.confidence,
+                              "notes": result.notes},
+                    )
+                )
+                await session.execute(stmt)
+                await session.commit()
+                typer.echo(f"[{market_id[:10]}] Saved.")
 
     asyncio.run(_run())
 
