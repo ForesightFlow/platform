@@ -125,7 +125,7 @@ Classified 864,533 markets:
 
 ---
 
-## Phase 3B — Subgraph Targeted Rerun (IN PROGRESS)
+## Phase 3B — Subgraph Targeted Rerun (COMPLETE)
 
 **Command:**
 ```bash
@@ -197,6 +197,14 @@ uv run fflow collect subgraph --all-resolved --min-volume 50000 --max-volume 200
 - Wallets in DB: 789,535
 - ETA: ~31 min — completion ~05:13 UTC / 09:13 local
 
+**FINAL — 2026-04-27 05:09 UTC (1025 min / ~17h total):**
+- ok: 10,409 markets with ≥1 trade
+- skipped (0 trades from subgraph): 182 markets
+- bad-indexer fast-fails: 11 markets
+- **Trades in DB: 17,905,585**
+- **Wallets in DB: 796,494**
+- **Distinct markets with trades: 10,410**
+
 **Sample markets confirmed working (all successful):**
 | market_id | category | vol | trades |
 |---|---|---|---|
@@ -211,15 +219,13 @@ uv run fflow collect subgraph --all-resolved --min-volume 50000 --max-volume 200
 
 ---
 
-## Phase 3C — Polygonscan (DEFERRED)
+## Phase 3C — Polygonscan (READY TO RUN)
 
-Polygonscan requires wallets seeded from trades. With Phase 3B still in progress, this runs after batch completes. Command:
+Phase 3B complete. 796,494 wallets seeded. Command:
 
 ```bash
 uv run fflow collect polygonscan --all-stale --max-age-days 9999 2>&1 | tee logs/polygonscan_rerun.log
 ```
-
-Expected wallet count: 10,000–100,000 addresses once Phase 3B completes.
 
 ---
 
@@ -232,26 +238,26 @@ Expected wallet count: 10,000–100,000 addresses once Phase 3B completes.
 4. 🔄 `p(T_news)`: requires `news_timestamps` table — UMA T_resolve recovery ran once (failed); T_news via GDELT not yet populated
 5. 🔄 Trades: Fix 1 now enables real trade data — batch in progress
 
-### Data collection run summary (as of 2026-04-26)
+### Data collection run summary (as of 2026-04-27)
 
 | collector | success runs | total records |
 |---|---|---|
 | gamma | 77 | 912,156 |
 | clob_prices | 727 | 1,550,594 |
-| subgraph_trades | 26 | ~46,348 |
+| subgraph_trades | 10,409+ | 17,905,585 |
 | uma | 0 (1 failed) | 0 |
 
 ### Blockers for ILS computation
 1. **T_news**: GDELT and UMA T_resolve both not populated → cannot compute ILS yet
-2. **Subgraph trades**: batch still running → sample ILS not yet possible
-3. **UMA rerun**: needs fresh attempt after UMA collector bug investigation
+2. **UMA rerun**: needs fresh attempt after UMA collector bug investigation
+3. **CLOB prices sparse**: only 26 markets have CLOB price history; baselineMidPrice for fixture must use trade VWAP fallback
 
 ### Recommendation: GREEN for Task 03
 
 The data infrastructure is sound:
 - 865K+ resolved markets with resolution_outcome (ground truth for ILS denominator)
 - CLOB prices populated (numerator candidates for p(T_open))
-- Subgraph trades now correctly collected (Fix 1) — will have 100K+ trades when batch completes
+- Subgraph trades correctly collected (Fix 1) — **17.9M trades across 10,410 markets**
 - Fix 2 ensures all future gamma ingestion correctly populates resolved_at and resolution_outcome
 
 Task 03 should focus on:
