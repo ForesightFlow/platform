@@ -8,3 +8,5 @@ dist/
 .ruff_cache/
 *.log
 .DS_Store
+.claude/
+memory/
