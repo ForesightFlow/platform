@@ -94,22 +94,30 @@ class UmaCollector(BaseCollector):
         target: str | None = None,
         market_id: str | None = None,
         all_resolved: bool = False,
+        event_resolved: bool = False,
+        min_volume: float = 50000.0,
         dry_run: bool = False,
     ) -> CollectorResult:
         mid = market_id or target
-        result = self._start_result(mid or "all_resolved")
+        label = mid or ("event_resolved" if event_resolved else "all_resolved")
+        result = self._start_result(label)
         async with AsyncSessionLocal() as session:
             run_id = await self._record_run_start(session, result)
             try:
-                if all_resolved:
+                if event_resolved:
+                    market_ids = await self._get_event_resolved_market_ids(session, min_volume)
+                elif all_resolved:
                     market_ids = await self._get_unresolved_market_ids(session)
                 else:
                     market_ids = [mid] if mid else []
 
+                log.info("uma_batch_start", n=len(market_ids), mode=label)
                 total = 0
-                for m_id in market_ids:
+                for i, m_id in enumerate(market_ids):
                     n = await self._process_market(session, m_id, dry_run)
                     total += n
+                    if (i + 1) % 100 == 0:
+                        log.info("uma_batch_progress", done=i + 1, total=len(market_ids), found=total)
 
                 result.n_written = total
                 result.status = "success"
@@ -126,6 +134,15 @@ class UmaCollector(BaseCollector):
     async def _get_unresolved_market_ids(self, session) -> list[str]:
         rows = await session.execute(
             select(Market.id).where(Market.resolved_at.is_(None))
+        )
+        return [r[0] for r in rows.all()]
+
+    async def _get_event_resolved_market_ids(self, session, min_volume: float) -> list[str]:
+        rows = await session.execute(
+            select(Market.id)
+            .where(Market.resolution_type == "event_resolved")
+            .where(Market.resolution_evidence_url.is_(None))
+            .where(Market.volume_total_usdc >= min_volume)
         )
         return [r[0] for r in rows.all()]
 
