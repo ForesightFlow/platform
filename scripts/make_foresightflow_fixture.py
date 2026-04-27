@@ -174,12 +174,24 @@ async def generate(
     written = 0
     dropped_no_price = 0
     dropped_no_trades = 0
+    scanned = 0
+
+    import os
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True) if os.path.dirname(output_path) else None
 
     with open(output_path, "w") as fh:
         async with AsyncSessionLocal() as session:
             for row in candidates:
                 if written >= limit:
                     break
+
+                scanned += 1
+                if scanned % 500 == 0:
+                    print(
+                        f"  scanned={scanned} written={written} "
+                        f"dropped_no_price={dropped_no_price} dropped_no_trades={dropped_no_trades}",
+                        file=sys.stderr,
+                    )
 
                 market_id, question, cat_fflow, cat_raw, volume, resolved_at, outcome = row
                 if resolved_at is None:

@@ -299,6 +299,7 @@ def collect_polygonscan(
     wallet: Annotated[Optional[str], typer.Option(help="Wallet address (0x...)")] = None,
     all_stale: Annotated[bool, typer.Option("--all-stale")] = False,
     max_age_days: Annotated[int, typer.Option(help="Staleness threshold in days")] = 30,
+    min_trades: Annotated[int, typer.Option(help="Only refresh wallets with at least N trades")] = 0,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
 ) -> None:
     """Fetch on-chain wallet data from Polygonscan."""
@@ -313,6 +314,7 @@ def collect_polygonscan(
             wallet=wallet,
             all_stale=all_stale,
             max_age_days=max_age_days,
+            min_trades=min_trades,
             dry_run=dry_run,
         )
     )

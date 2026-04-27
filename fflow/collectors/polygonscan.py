@@ -36,6 +36,7 @@ class PolygonscanCollector(BaseCollector):
         wallet: str | None = None,
         all_stale: bool = False,
         max_age_days: int = 30,
+        min_trades: int = 0,
         dry_run: bool = False,
     ) -> CollectorResult:
         addr = (wallet or target or "").lower()
@@ -44,14 +45,17 @@ class PolygonscanCollector(BaseCollector):
             run_id = await self._record_run_start(session, result)
             try:
                 if all_stale:
-                    wallets = await self._get_stale_wallets(session, max_age_days)
+                    wallets = await self._get_stale_wallets(session, max_age_days, min_trades)
                 else:
                     wallets = [addr] if addr else []
 
                 total = 0
-                for w_addr in wallets:
+                n_wallets = len(wallets)
+                for i, w_addr in enumerate(wallets, 1):
                     n = await self._process_wallet(session, w_addr, dry_run)
                     total += n
+                    if i % 100 == 0:
+                        log.info("polygonscan_batch_progress", done=i, total=n_wallets, written=total)
 
                 result.n_written = total
                 result.status = "success"
@@ -65,16 +69,36 @@ class PolygonscanCollector(BaseCollector):
                 await self._record_run_end(session, run_id, result)
         return result
 
-    async def _get_stale_wallets(self, session, max_age_days: int) -> list[str]:
+    async def _get_stale_wallets(self, session, max_age_days: int, min_trades: int = 0) -> list[str]:
         from datetime import timedelta
+        from sqlalchemy import text as sa_text
         cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
-        rows = await session.execute(
-            select(Wallet.address).where(
-                (Wallet.last_refreshed_at < cutoff)
-                | Wallet.first_seen_chain_at.is_(None)
+        if min_trades > 0:
+            rows = await session.execute(
+                sa_text("""
+                    SELECT w.address
+                    FROM wallets w
+                    JOIN (
+                        SELECT taker_address, COUNT(*) AS tc
+                        FROM trades
+                        GROUP BY taker_address
+                    ) t ON t.taker_address = w.address
+                    WHERE (w.last_refreshed_at < :cutoff OR w.first_seen_chain_at IS NULL)
+                      AND t.tc >= :min_trades
+                    ORDER BY t.tc DESC
+                """),
+                {"cutoff": cutoff, "min_trades": min_trades},
             )
-        )
-        return [r[0] for r in rows.all()]
+        else:
+            rows = await session.execute(
+                select(Wallet.address).where(
+                    (Wallet.last_refreshed_at < cutoff)
+                    | Wallet.first_seen_chain_at.is_(None)
+                )
+            )
+        result = [r[0] for r in rows.all()]
+        log.info("polygonscan_wallets_selected", count=len(result), min_trades=min_trades)
+        return result
 
     async def _rate_limit(self) -> None:
         async with self._token_bucket_lock:
