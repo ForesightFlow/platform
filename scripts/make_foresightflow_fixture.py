@@ -16,6 +16,10 @@ Filters applied (all non-optional):
 Baseline: last CLOB mid_price strictly >24h before resolvedAt; fallback to trade
 VWAP from all trades >24h before resolvedAt. Markets with no baseline are dropped.
 
+Token-side note (Case 1 — explicit tag): all rows in the trades table have
+outcome_index=1, which is the NO token on Polymarket binary markets. The raw
+VWAP therefore gives the NO price. The YES baseline is computed as 1 - VWAP.
+
 Category targets (Phase 0):
   crypto=8, politics=8, sports=8, economics=8, geopolitics=9, entertainment=9
 
@@ -223,7 +227,8 @@ async def _baseline(session, market_id: str, cutoff: datetime) -> tuple[float | 
     r = await session.execute(text(_VWAP_SQL), {"mid": market_id, "cutoff": cutoff})
     row = r.fetchone()
     if row and row[0] is not None:
-        return float(row[0]), "trade_vwap", int(row[1])
+        # outcome_index=1 is the NO token → invert to YES price
+        return 1.0 - float(row[0]), "trade_vwap", int(row[1])
     return None, "none", 0
 
 
