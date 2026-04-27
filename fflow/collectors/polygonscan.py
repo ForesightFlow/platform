@@ -87,7 +87,7 @@ class PolygonscanCollector(BaseCollector):
 
     async def _get(self, client: RetryableHTTPClient, params: dict) -> dict:
         await self._rate_limit()
-        resp = await client.get(settings.polygonscan_url, params=params)
+        resp = await client.get(settings.polygonscan_url, params={"chainid": 137, **params})
         resp.raise_for_status()
         data = resp.json()
         if data.get("status") == "0" and data.get("message") != "No transactions found":

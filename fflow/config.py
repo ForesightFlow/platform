@@ -18,7 +18,7 @@ class Settings(BaseSettings):
 
     # Polygonscan
     polygonscan_api_key: str | None = None
-    polygonscan_url: str = "https://api.polygonscan.com/api"
+    polygonscan_url: str = "https://api.etherscan.io/v2/api"
 
     # Anthropic (Tier 3 LLM)
     anthropic_api_key: str | None = None
