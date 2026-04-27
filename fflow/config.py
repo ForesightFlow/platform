@@ -18,13 +18,13 @@ class Settings(BaseSettings):
 
     # Polygonscan
     polygonscan_api_key: str | None = None
-    polygonscan_url: str = "https://api.polygonscan.com/api"
+    polygonscan_url: str = "https://api.etherscan.io/v2/api"
 
     # Anthropic (Tier 3 LLM)
     anthropic_api_key: str | None = None
 
     # UMA / Polygon RPC
-    polygon_rpc_url: str = "https://polygon-rpc.com"
+    polygon_rpc_url: str = "https://1rpc.io/matic"
 
     # HTTP tuning
     http_timeout_seconds: float = 30.0

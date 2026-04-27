@@ -159,12 +159,13 @@ class MarketLabel(Base):
     ils_24h: Mapped[Any] = mapped_column(Numeric(10, 6), nullable=True)
     ils_7d: Mapped[Any] = mapped_column(Numeric(10, 6), nullable=True)
     volume_pre_share: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
-    pre_news_max_jump: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
+    pre_news_max_jump: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=True)
     wallet_hhi_top10: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
     time_to_news_top10: Mapped[list | None] = mapped_column(JSONB)
     n_trades_total: Mapped[int | None] = mapped_column(Integer)
     n_trades_pre_news: Mapped[int | None] = mapped_column(Integer)
     category_fflow: Mapped[str | None] = mapped_column(String(100))
+    price_source: Mapped[str | None] = mapped_column(String(20))  # 'clob' | 'trade_vwap'
     computed_at: Mapped[datetime | None] = mapped_column(TZ())
     computed_by_run_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("data_collection_runs.id")

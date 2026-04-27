@@ -125,7 +125,7 @@ Classified 864,533 markets:
 
 ---
 
-## Phase 3B — Subgraph Targeted Rerun (IN PROGRESS)
+## Phase 3B — Subgraph Targeted Rerun (COMPLETE)
 
 **Command:**
 ```bash
@@ -140,9 +140,70 @@ uv run fflow collect subgraph --all-resolved --min-volume 50000 --max-volume 200
 - Markets processed: 30 / 10,602
 - Trades fetched: 214,292
 - Wallets seeded: 41,293
-- Current rate: ~3 markets/min (near-$2M markets have 10–14K trades = many pages)
-- Rate will increase as volume decreases toward $50K (fewer pages per market)
-- Estimated completion: 20–25 hours (overnight + tomorrow morning)
+
+**Status as of 2026-04-26 16:17 UTC (73 min in):**
+- Markets processed: 189 / 10,602 (1.8%) | Trades: 1,403,003 | Wallets: 177,227 | Errors: 0
+
+**Status as of 2026-04-26 17:24 UTC (140 min in):**
+- Markets processed: 351 / 10,602 (3.3%) | Trades: 2,564,028 | Wallets: 252,601 | Errors: 0
+
+**Status as of 2026-04-26 18:25 UTC (201 min in):**
+- Markets processed: 530 / 10,602 (5.0%) | Trades: 3,625,367 | Wallets: 315,162 | Indexer skips: 3
+
+**Status as of 2026-04-26 19:27 UTC (263 min in):**
+- Markets processed: 737 / 10,602 (6.9%) | Trades: 4,645,272 | Wallets: 374,991 | Indexer skips: 3
+
+**Status as of 2026-04-26 20:28 UTC (324 min in):**
+- Markets processed: 952 / 10,602 (9.0%) | Trades: 5,592,716 | Wallets: 420,533 | Indexer skips: 3
+
+**Status as of 2026-04-26 21:29 UTC (384 min in):**
+- Markets processed: 1,172 / 10,602 (11.1%) | Trades: 6,447,871 | Wallets: 468,259 | Indexer skips: 3
+
+**Status as of 2026-04-26 22:30 UTC (445 min in):**
+- Markets processed: 1,398 / 10,602 (13.2%) | Trades: 7,276,161 | Wallets: 498,190 | Indexer skips: 3
+
+**Status as of 2026-04-26 23:31 UTC (507 min in):**
+- Markets processed: 1,657 / 10,602 (15.6%) | Trades: 8,076,790 | Wallets: 532,688 | Indexer skips: 3
+
+**Status as of 2026-04-27 00:32 UTC (568 min in):**
+- Markets processed: 1,997 / 10,602 (18.8%) | Trades: 8,992,189 | Wallets: 562,249 | Indexer skips: 3
+
+**Status as of 2026-04-27 01:33 UTC (629 min in):**
+- Markets processed: 2,471 / 10,602 (23.3%) | Trades: 10,128,228 | Wallets: 601,365 | Indexer skips: 3
+
+**Status as of 2026-04-27 02:34 UTC (690 min in):**
+- Markets processed: 3,060 / 10,602 (28.9%) | Trades: 11,277,901 | Wallets: 636,327 | Indexer skips: 11
+
+**Status as of 2026-04-27 03:36 UTC (752 min in):**
+- Markets processed: 3,749 / 10,602 (35.4%) | Trades: 12,426,287 | Wallets: 666,568 | Indexer skips: 11
+
+**Status as of 2026-04-27 04:37 UTC (813 min in):**
+- Markets processed: 4,596 / 10,602 (43.3%) | Trades: 13,536,021 | Wallets: 694,035 | Indexer skips: 11
+
+**Status as of 2026-04-27 05:38 UTC (874 min in):**
+- Markets processed: 5,553 / 10,602 (52.4%) | Trades: 14,617,753 | Wallets: 725,170 | Indexer skips: 11
+
+**Status as of 2026-04-27 06:39 UTC (935 min in):**
+- Markets processed: 6,746 / 10,602 (63.6%) | Trades: 15,654,239 | Wallets: 748,366 | Indexer skips: 11
+
+**Status as of 2026-04-27 07:40 UTC (996 min in):**
+- Markets processed: 8,148 / 10,602 (76.9%) | Trades: 16,627,236 | Wallets: 770,117 | Indexer skips: 11
+
+**Status as of 2026-04-27 08:42 UTC (1058 min in):**
+- Markets processed: 9,786 / 10,602 (92.3%) — 816 remaining
+- bad-indexers skips: 11 (no new ones)
+- Rate: ~26.4 markets/min (↑↑; vol band ~$58K, near floor)
+- Trades in DB: 17,538,418
+- Wallets in DB: 789,535
+- ETA: ~31 min — completion ~05:13 UTC / 09:13 local
+
+**FINAL — 2026-04-27 05:09 UTC (1025 min / ~17h total):**
+- ok: 10,409 markets with ≥1 trade
+- skipped (0 trades from subgraph): 182 markets
+- bad-indexer fast-fails: 11 markets
+- **Trades in DB: 17,905,585**
+- **Wallets in DB: 796,494**
+- **Distinct markets with trades: 10,410**
 
 **Sample markets confirmed working (all successful):**
 | market_id | category | vol | trades |
@@ -153,18 +214,18 @@ uv run fflow collect subgraph --all-resolved --min-volume 50000 --max-volume 200
 | 0x6e932d... | regulatory_decision | $1.99M | 2,046 |
 | 0x26dbea... | military_geopolitics | $1.93M | 3,607 |
 | 0xb9db6e... | military_geopolitics | $1.92M | 14,124 |
+| 0x5f1516... | (TBD) | $1.55M | 14,611 |
+| 0xb9ba10... | (TBD) | $1.55M | 13,290 |
 
 ---
 
-## Phase 3C — Polygonscan (DEFERRED)
+## Phase 3C — Polygonscan (READY TO RUN)
 
-Polygonscan requires wallets seeded from trades. With Phase 3B still in progress, this runs after batch completes. Command:
+Phase 3B complete. 796,494 wallets seeded. Command:
 
 ```bash
 uv run fflow collect polygonscan --all-stale --max-age-days 9999 2>&1 | tee logs/polygonscan_rerun.log
 ```
-
-Expected wallet count: 10,000–100,000 addresses once Phase 3B completes.
 
 ---
 
@@ -177,26 +238,26 @@ Expected wallet count: 10,000–100,000 addresses once Phase 3B completes.
 4. 🔄 `p(T_news)`: requires `news_timestamps` table — UMA T_resolve recovery ran once (failed); T_news via GDELT not yet populated
 5. 🔄 Trades: Fix 1 now enables real trade data — batch in progress
 
-### Data collection run summary (as of 2026-04-26)
+### Data collection run summary (as of 2026-04-27)
 
 | collector | success runs | total records |
 |---|---|---|
 | gamma | 77 | 912,156 |
 | clob_prices | 727 | 1,550,594 |
-| subgraph_trades | 26 | ~46,348 |
+| subgraph_trades | 10,409+ | 17,905,585 |
 | uma | 0 (1 failed) | 0 |
 
 ### Blockers for ILS computation
 1. **T_news**: GDELT and UMA T_resolve both not populated → cannot compute ILS yet
-2. **Subgraph trades**: batch still running → sample ILS not yet possible
-3. **UMA rerun**: needs fresh attempt after UMA collector bug investigation
+2. **UMA rerun**: needs fresh attempt after UMA collector bug investigation
+3. **CLOB prices sparse**: only 26 markets have CLOB price history; baselineMidPrice for fixture must use trade VWAP fallback
 
 ### Recommendation: GREEN for Task 03
 
 The data infrastructure is sound:
 - 865K+ resolved markets with resolution_outcome (ground truth for ILS denominator)
 - CLOB prices populated (numerator candidates for p(T_open))
-- Subgraph trades now correctly collected (Fix 1) — will have 100K+ trades when batch completes
+- Subgraph trades correctly collected (Fix 1) — **17.9M trades across 10,410 markets**
 - Fix 2 ensures all future gamma ingestion correctly populates resolved_at and resolution_outcome
 
 Task 03 should focus on:
