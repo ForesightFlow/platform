@@ -272,17 +272,25 @@ async def _subgraph_batch(
 def collect_uma(
     market: Annotated[Optional[str], typer.Option(help="Market condition ID")] = None,
     all_resolved: Annotated[bool, typer.Option("--all-resolved")] = False,
+    event_resolved: Annotated[bool, typer.Option("--event-resolved", help="Run on event_resolved markets missing evidence URL")] = False,
+    min_volume: Annotated[float, typer.Option(help="Min volume for --event-resolved mode")] = 50000.0,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
 ) -> None:
     """Fetch UMA resolution data for markets."""
     from fflow.collectors.uma import UmaCollector
 
-    if not market and not all_resolved:
-        typer.echo("Provide --market or --all-resolved", err=True)
+    if not market and not all_resolved and not event_resolved:
+        typer.echo("Provide --market, --all-resolved, or --event-resolved", err=True)
         raise typer.Exit(1)
 
     result = asyncio.run(
-        UmaCollector().run(market_id=market, all_resolved=all_resolved, dry_run=dry_run)
+        UmaCollector().run(
+            market_id=market,
+            all_resolved=all_resolved,
+            event_resolved=event_resolved,
+            min_volume=min_volume,
+            dry_run=dry_run,
+        )
     )
     typer.echo(f"uma: {result.status}, n={result.n_written}")
     if result.error:
