@@ -20,15 +20,20 @@ import structlog
 log = structlog.get_logger()
 
 _MODEL = "claude-haiku-4-5-20251001"
-_MAX_TOKENS = 300
+_MAX_TOKENS = 400
 _CALL_CAP = 50
 _CONFIDENCE = 0.60
 
 _SYSTEM = """You are a research assistant helping identify when news first broke about a prediction market's topic.
 
-Given a market question and description, identify the most likely date the underlying event first became public knowledge.
-Respond with ONLY a date in ISO-8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:MM:SSZ) and a one-sentence explanation.
-If you cannot determine a date, respond with "UNKNOWN".
+Given a market question, description, and optional context notes, identify the most likely date the underlying event FIRST became public knowledge. This is the "T_news" anchor — the moment the event was first observable by the public.
+
+Key rules:
+- Return the EARLIEST date when the news/event first became public, not the market resolution date
+- If the context notes provide a specific date with sourcing, prefer that
+- For events near or after 2025, use the resolution date as an upper bound
+- Respond with ONLY a date in ISO-8601 format (YYYY-MM-DDTHH:MM:SSZ or YYYY-MM-DD) and a one-sentence explanation
+- If you cannot determine a date, respond with "UNKNOWN"
 
 Format:
 DATE: <ISO-8601 date>
@@ -55,6 +60,7 @@ async def llm_extract_date(
     api_key: str,
     *,
     confirmed: bool = False,
+    extra_context: str = "",
 ) -> LLMTimestamp | None:
     """Call Claude to extract a T_news date from the market text.
 
@@ -87,7 +93,8 @@ async def llm_extract_date(
         return None
 
     desc_section = f"\n\nDescription: {description}" if description else ""
-    user_msg = f"Question: {question}{desc_section}"
+    ctx_section = f"\n\nContext notes: {extra_context}" if extra_context else ""
+    user_msg = f"Question: {question}{desc_section}{ctx_section}"
 
     _call_counter += 1
     try:
