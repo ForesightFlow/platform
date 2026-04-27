@@ -165,6 +165,7 @@ class MarketLabel(Base):
     n_trades_total: Mapped[int | None] = mapped_column(Integer)
     n_trades_pre_news: Mapped[int | None] = mapped_column(Integer)
     category_fflow: Mapped[str | None] = mapped_column(String(100))
+    price_source: Mapped[str | None] = mapped_column(String(20))  # 'clob' | 'trade_vwap'
     computed_at: Mapped[datetime | None] = mapped_column(TZ())
     computed_by_run_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("data_collection_runs.id")
