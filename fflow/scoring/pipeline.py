@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fflow.models import LabelAudit, Market, MarketLabel, NewsTimestamp, Price
-from fflow.scoring.ils import compute_ils
+from fflow.scoring.ils import PriceLookupError, compute_ils
 from fflow.scoring.price_series import reconstruct_price_series
 from fflow.scoring.volume import compute_volume_features
 from fflow.scoring.wallet_features import compute_wallet_features
@@ -72,6 +72,11 @@ async def compute_market_label(
 
     t_news = news_row.t_news
 
+    # T_news must not predate T_open (market didn't exist yet → ILS undefined)
+    if t_news < t_open:
+        logger.warning("t_news_predates_t_open", t_news=str(t_news), t_open=str(t_open))
+        return None
+
     # Load price series — CLOB first, trade VWAP fallback (price_source='auto')
     if price_source in ("auto", "clob"):
         prices = await reconstruct_price_series(market_id, session, granularity="1min")
@@ -108,14 +113,33 @@ async def compute_market_label(
 
     actual_price_source = prices["source"].iloc[0] if "source" in prices.columns else "unknown"
 
+    import pandas as pd
+    # If t_open predates the first trade by more than 5 min, snap t_open to the first
+    # available trade timestamp so p_open reflects the first observable price.
+    first_ts = prices["ts"].min()
+    if hasattr(first_ts, "to_pydatetime"):
+        first_ts = first_ts.to_pydatetime()
+    from datetime import timedelta
+    if (first_ts - t_open).total_seconds() > 300:
+        logger.info(
+            "t_open_snapped_to_first_trade",
+            original_t_open=str(t_open),
+            snapped_to=str(first_ts),
+        )
+        t_open = first_ts
+
     # Compute ILS
-    ils_bundle = compute_ils(
-        prices=prices,
-        t_open=t_open,
-        t_news=t_news,
-        t_resolve=t_resolve,
-        p_resolve=p_resolve,
-    )
+    try:
+        ils_bundle = compute_ils(
+            prices=prices,
+            t_open=t_open,
+            t_news=t_news,
+            t_resolve=t_resolve,
+            p_resolve=p_resolve,
+        )
+    except PriceLookupError as exc:
+        logger.warning("price_lookup_failed", error=str(exc))
+        return None
 
     # Compute volume features
     vol = await compute_volume_features(session, market_id, t_news, t_resolve)

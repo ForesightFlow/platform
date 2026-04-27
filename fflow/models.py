@@ -159,7 +159,7 @@ class MarketLabel(Base):
     ils_24h: Mapped[Any] = mapped_column(Numeric(10, 6), nullable=True)
     ils_7d: Mapped[Any] = mapped_column(Numeric(10, 6), nullable=True)
     volume_pre_share: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
-    pre_news_max_jump: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
+    pre_news_max_jump: Mapped[Any] = mapped_column(Numeric(20, 6), nullable=True)
     wallet_hhi_top10: Mapped[Any] = mapped_column(Numeric(8, 6), nullable=True)
     time_to_news_top10: Mapped[list | None] = mapped_column(JSONB)
     n_trades_total: Mapped[int | None] = mapped_column(Integer)
