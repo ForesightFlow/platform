@@ -167,14 +167,22 @@ async def llm_extract_date(
         log.info("llm_no_date", question=question[:80], mode=recovery_mode)
         return None
 
-    raw_date = date_match.group(1).strip().rstrip(".,;")
+    # Strip trailing junk (e.g. "**", punctuation) that sometimes leaks from markdown
+    raw_date = re.sub(r"[*,;.\s]+$", "", date_match.group(1).strip())
     notes = reason_match.group(1).strip() if reason_match else ""
     sources_raw = sources_match.group(1).strip() if sources_match else ""
     sources = tuple(s.strip() for s in sources_raw.split(",") if s.strip() and s.strip().lower() != "none")
 
     dt: datetime | None = None
     # Try formats longest-first; do NOT slice by fmt length (format len ≠ output len)
-    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M", "%Y-%m-%d"):
+    for fmt in (
+        "%Y-%m-%dT%H:%M:%SZ",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%Y-%m-%dT%H:%MZ",
+        "%Y-%m-%dT%H:%M%z",
+        "%Y-%m-%dT%H:%M",
+        "%Y-%m-%d",
+    ):
         try:
             parsed = datetime.strptime(raw_date, fmt)
             dt = parsed.replace(tzinfo=UTC)
