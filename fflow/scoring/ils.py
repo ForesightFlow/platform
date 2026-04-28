@@ -197,17 +197,18 @@ def compute_ils_deadline(
     p_resolve: int,
     epsilon: Decimal = _EPSILON_DEFAULT,
     lookback: timedelta = _DEADLINE_LOOKBACK,
+    t_event: datetime | None = None,
 ) -> ILSBundle:
     """Compute deadline-ILS (paper Section 7) from a minute-resolution price series.
 
-    ILS_dl = (p(T_resolve⁻) - p(T_open)) / (p_resolve - p(T_open))
+    Paper §7.2: ILS_dl = (p(T_event⁻) - p(T_open)) / (p_resolve - p(T_open))
+    where T_event⁻ is the price immediately before the event became publicly observable.
 
-    T_resolve⁻ = T_resolve - lookback (default 1 h). For markets that resolve
-    before their stated deadline, T_resolve is the actual resolution time.
+    When t_event is provided (recovered via Tier 3 web search), T_event⁻ = t_event - 1 min.
+    When t_event is None, falls back to the legacy proxy T_event⁻ = T_resolve - lookback.
 
     Returns the same ILSBundle shape as compute_ils() for DB compatibility.
-    The 'p_news' field stores p(T_resolve⁻) — the pre-deadline reference price.
-    Multi-window variants measure price movement relative to T_resolve⁻.
+    The 'p_news' field stores p(T_event⁻).
 
     Args:
         prices:    DataFrame with 'ts' (tz-aware) and 'mid_price' columns.
@@ -215,13 +216,22 @@ def compute_ils_deadline(
         t_resolve: Market resolution timestamp (T_resolve).
         p_resolve: Binary resolution outcome — 0 (NO) or 1 (YES).
         epsilon:   Minimum |delta_total| for ILS to be defined. Default 0.05.
-        lookback:  Window before T_resolve defining T_resolve⁻. Default 1 h.
+        lookback:  Fallback window when t_event is None. Default 1 h.
+        t_event:   Recovered event timestamp from Tier 3. When provided, used as
+                   the authoritative reference per paper §7.2.
     """
     flags: list[str] = []
 
     p_open = _lookup_price(prices, t_open, flags, "price_history_gap_at_topen", forward_window=_TOPEN_FORWARD_WINDOW)
 
-    t_event_minus = t_resolve - lookback
+    if t_event is not None:
+        # Paper §7.2: use recovered T_event; p(T_event⁻) = price 1 min before event
+        t_event_minus = t_event - timedelta(minutes=1)
+        flags.append("t_event_recovered")
+    else:
+        # Legacy proxy: T_resolve - lookback
+        t_event_minus = t_resolve - lookback
+
     if t_event_minus <= t_open:
         flags.append("lookback_predates_topen")
         t_event_minus = t_open  # fallback: use open price as both endpoints

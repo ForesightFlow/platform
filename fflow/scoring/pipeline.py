@@ -75,15 +75,32 @@ async def compute_market_label(
 
     # --- Branch on resolution_type -------------------------------------------
     if resolution_type == "deadline_resolved":
-        # Deadline path: no T_news required; use T_resolve - lookback as reference
+        # For YES-resolved deadline markets: use recovered T_event from Tier 3 if available.
+        # For NO-resolved: no event occurred; T_resolve - lookback is the correct proxy.
+        t_event: datetime | None = None
+        if p_resolve == 1:
+            news_row = (
+                await session.execute(
+                    select(NewsTimestamp)
+                    .where(NewsTimestamp.market_id == market_id)
+                    .order_by(NewsTimestamp.tier, NewsTimestamp.confidence.desc())
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if news_row is not None:
+                t_event = news_row.t_news  # stored as T_event by tier3 for deadline-YES markets
+                logger.info("using_recovered_t_event", t_event=t_event.isoformat())
+        else:
+            news_row = None
+
         ils_bundle = compute_ils_deadline(
             prices=prices,
             t_open=t_open,
             t_resolve=t_resolve,
             p_resolve=p_resolve,
+            t_event=t_event,  # None → falls back to T_resolve - lookback proxy
         )
-        t_news = t_resolve - _DEADLINE_LOOKBACK  # synthetic reference for label row
-        news_row = None
+        t_news = t_event or (t_resolve - _DEADLINE_LOOKBACK)
         vol = await compute_volume_features(session, market_id, t_news, t_resolve)
         wallet = await compute_wallet_features(session, market_id, t_news, p_resolve)
 

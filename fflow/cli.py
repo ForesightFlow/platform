@@ -188,16 +188,17 @@ def taxonomy_classify(
 def taxonomy_classify_type(
     limit: Annotated[int, typer.Option(help="Max markets to classify per run")] = 10_000,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    force: Annotated[bool, typer.Option("--force", help="Re-classify already-classified markets (fixes stale classifications)")] = False,
 ) -> None:
     """Populate resolution_type (deadline_resolved / unclassifiable) for markets where NULL.
 
     Logs WARNING for any market where the deadline pattern matched only in the
     description field — these are candidates for manual review.
-    Run repeatedly until '0 markets classified' to backfill the full corpus.
+    Use --force to re-run on already-classified markets (fixes stale values from old classifier).
     """
     from fflow.taxonomy.classifier import classify_type_batch
 
-    counts = asyncio.run(classify_type_batch(limit=limit, dry_run=dry_run))
+    counts = asyncio.run(classify_type_batch(limit=limit, dry_run=dry_run, force=force))
     if not counts:
         typer.echo("classify-type: nothing to classify")
         return
@@ -366,13 +367,21 @@ def news_tier3(
     confirm: Annotated[bool, typer.Option("--confirm", help="Acknowledge LLM API cost")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
 ) -> None:
-    """Tier 3: use Claude LLM to extract T_news. Requires --confirm."""
+    """Tier 3: use Claude LLM + web search to extract T_news or T_event.
+
+    Dispatches by resolution_type (paper §7.2):
+      deadline_resolved YES → T_event recovery ("when did the event happen?")
+      deadline_resolved NO  → skipped (no event occurred; T_resolve is authoritative)
+      event_resolved / unclassifiable → T_news recovery ("when did news first break?")
+
+    Requires --confirm to acknowledge LLM API cost (~$0.05-0.20 per call with web search).
+    """
     from fflow.db import AsyncSessionLocal
     from fflow.models import Market, NewsTimestamp
     from fflow.news.llm_match import llm_extract_date
 
     if not confirm and not dry_run:
-        typer.echo("Pass --confirm to acknowledge LLM API cost (~$0.01-0.05 per call).")
+        typer.echo("Pass --confirm to acknowledge LLM API cost (~$0.05-0.20 with web search).")
         raise typer.Exit(1)
 
     async def _run() -> None:
@@ -382,22 +391,45 @@ def news_tier3(
                 typer.echo(f"Market not found: {market}", err=True)
                 raise typer.Exit(1)
 
+            # Route by resolution_type + outcome (paper §7.2)
+            is_deadline = mkt.resolution_type == "deadline_resolved"
+            is_yes = mkt.resolution_outcome == 1
+
+            if is_deadline and not is_yes:
+                typer.echo(
+                    "deadline_resolved NO market — T_resolve is authoritative; "
+                    "no T_event recovery needed. Skipping."
+                )
+                return
+
+            recovery_mode = "t_event" if is_deadline else "t_news"
+            typer.echo(
+                f"resolution_type={mkt.resolution_type} outcome={mkt.resolution_outcome} "
+                f"→ recovery_mode={recovery_mode}"
+            )
+
             result = await llm_extract_date(
                 question=mkt.question,
                 description=mkt.description,
                 api_key=settings.anthropic_api_key,
                 confirmed=confirm,
+                recovery_mode=recovery_mode,
             )
             if result is None:
                 typer.echo("LLM returned no date.")
                 raise typer.Exit(1)
 
-            typer.echo(f"t_news={result.t_news.isoformat()} confidence={result.confidence}")
+            label = "t_event" if recovery_mode == "t_event" else "t_news"
+            typer.echo(f"{label}={result.t_news.isoformat()} confidence={result.confidence}")
+            typer.echo(f"sources={', '.join(result.sources) or 'none'}")
             typer.echo(f"notes={result.notes}")
             if dry_run:
                 return
 
             from sqlalchemy.dialects.postgresql import insert as pg_insert
+            notes_full = (
+                f"[{recovery_mode}] sources={', '.join(result.sources) or 'none'}. {result.notes}"
+            )
             stmt = (
                 pg_insert(NewsTimestamp)
                 .values(
@@ -405,13 +437,13 @@ def news_tier3(
                     t_news=result.t_news,
                     tier=3,
                     confidence=result.confidence,
-                    notes=result.notes,
+                    notes=notes_full,
                     recovered_at=datetime.now(UTC),
                 )
                 .on_conflict_do_update(
                     index_elements=["market_id"],
                     set_={"t_news": result.t_news, "tier": 3,
-                          "confidence": result.confidence},
+                          "confidence": result.confidence, "notes": notes_full},
                 )
             )
             await session.execute(stmt)
