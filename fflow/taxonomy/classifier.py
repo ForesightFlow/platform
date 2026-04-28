@@ -102,8 +102,12 @@ async def classify_batch(limit: int = 1000, dry_run: bool = False) -> int:
 async def classify_type_batch(
     limit: int = 10_000,
     dry_run: bool = False,
+    force: bool = False,
 ) -> dict[str, int]:
     """Populate markets.resolution_type for rows where it is NULL.
+
+    When force=True, re-classifies all markets (including already-classified ones).
+    Use this to fix stale classifications from previous classifier versions.
 
     Logs a WARNING for each market where the deadline pattern matched only in
     the description (not the question) — these are potential false positives
@@ -114,11 +118,10 @@ async def classify_type_batch(
     from fflow.scoring.resolution_type import classify_resolution_type_detailed
 
     async with AsyncSessionLocal() as session:
-        rows = await session.execute(
-            select(Market.id, Market.question, Market.description)
-            .where(Market.resolution_type.is_(None))
-            .limit(limit)
-        )
+        q = select(Market.id, Market.question, Market.description)
+        if not force:
+            q = q.where(Market.resolution_type.is_(None))
+        rows = await session.execute(q.limit(limit))
         markets = rows.all()
 
     if not markets:
