@@ -8,7 +8,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from fflow.models import LabelAudit, Market, MarketLabel, NewsTimestamp, Price
-from fflow.scoring.ils import _DEADLINE_LOOKBACK, compute_ils, compute_ils_deadline
+from fflow.scoring.ils import PriceLookupError, _DEADLINE_LOOKBACK, compute_ils, compute_ils_deadline
+from fflow.scoring.price_series import reconstruct_price_series
 from fflow.scoring.volume import compute_volume_features
 from fflow.scoring.wallet_features import compute_wallet_features
 
@@ -23,6 +24,7 @@ async def compute_market_label(
     session: AsyncSession,
     market_id: str,
     *,
+    price_source: str = "auto",
     dry_run: bool = False,
 ) -> MarketLabel | None:
     """Compute and upsert a MarketLabel for market_id.
@@ -65,13 +67,56 @@ async def compute_market_label(
         )
     ).all()
 
-    if not price_rows:
+    # Load price series — CLOB first, trade VWAP fallback (price_source='auto')
+    if price_source in ("auto", "clob"):
+        prices = await reconstruct_price_series(market_id, session, granularity="1min")
+        # If CLOB-only was requested but no data, fail
+        if price_source == "clob" and (prices.empty or prices["source"].iloc[0] != "clob"):
+            logger.warning("no_clob_price_data")
+            return None
+    elif price_source == "trade_vwap":
+        # Force trade VWAP by temporarily clearing CLOB result check
+        from sqlalchemy import text as _sa_text
+        trade_rows = (await session.execute(
+            _sa_text("""
+                SELECT date_trunc('minute', ts) AS bucket,
+                       SUM(notional_usdc::numeric)/NULLIF(SUM(size_shares::numeric),0) AS vwap,
+                       SUM(notional_usdc::numeric) AS vol
+                FROM trades WHERE market_id = :mid GROUP BY bucket ORDER BY bucket
+            """), {"mid": market_id}
+        )).fetchall()
+        if not trade_rows:
+            logger.warning("no_trade_data")
+            return None
+        import pandas as pd
+        prices = pd.DataFrame([
+            {"ts": r[0], "mid_price": r[1], "volume_minute": r[2], "source": "trade_vwap"}
+            for r in trade_rows if r[1] is not None
+        ])
+        prices["ts"] = pd.to_datetime(prices["ts"], utc=True)
+    else:
+        raise ValueError(f"Unknown price_source {price_source!r}")
+
+    if prices.empty:
         logger.warning("no_price_data")
         return None
 
-    import pandas as pd
+    actual_price_source = prices["source"].iloc[0] if "source" in prices.columns else "unknown"
 
-    prices = pd.DataFrame([{"ts": r.ts, "mid_price": r.mid_price} for r in price_rows])
+    import pandas as pd
+    # If t_open predates the first trade by more than 5 min, snap t_open to the first
+    # available trade timestamp so p_open reflects the first observable price.
+    first_ts = prices["ts"].min()
+    if hasattr(first_ts, "to_pydatetime"):
+        first_ts = first_ts.to_pydatetime()
+    from datetime import timedelta
+    if (first_ts - t_open).total_seconds() > 300:
+        logger.info(
+            "t_open_snapped_to_first_trade",
+            original_t_open=str(t_open),
+            snapped_to=str(first_ts),
+        )
+        t_open = first_ts
 
     # --- Branch on resolution_type -------------------------------------------
     if resolution_type == "deadline_resolved":
@@ -156,6 +201,7 @@ async def compute_market_label(
         "time_to_news_top10": wallet["time_to_news_top10"],
         "category_fflow": market.category_fflow,
         "resolution_type": resolution_type,
+        "price_source": actual_price_source,
         "computed_at": computed_at,
         "flags": ils_bundle.flags,
     }

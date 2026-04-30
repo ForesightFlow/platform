@@ -25,6 +25,8 @@ _CONFIDENCE = 0.70
 _WINDOW_BEFORE_RESOLVE = timedelta(days=30)
 _MAX_RESULTS = 5
 
+_import_warned = False  # fire gdelt_unavailable only once per process
+
 # NLTK stopwords (English) — loaded lazily
 _STOPWORDS: set[str] | None = None
 
@@ -98,14 +100,17 @@ async def search_gdelt(
 
     When dry_run=True, prints the query that would run and returns None.
     """
+    global _import_warned
     try:
         from google.cloud import bigquery  # type: ignore
         from google.api_core.exceptions import GoogleAPICallError  # type: ignore
     except ImportError:
-        log.warning(
-            "gdelt_unavailable",
-            reason="google-cloud-bigquery not installed; install with: uv pip install 'fflow[gdelt]'",
-        )
+        if not _import_warned:
+            _import_warned = True
+            log.warning(
+                "gdelt_unavailable",
+                reason="google-cloud-bigquery not installed; install with: uv pip install 'fflow[gdelt]'",
+            )
         return None
 
     keywords = _extract_keywords(question)

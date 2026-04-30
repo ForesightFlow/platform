@@ -21,7 +21,9 @@ dependencies = [
     "anthropic>=0.25",
     "pyyaml>=6.0",
     "google-cloud-bigquery>=3.0; extra == 'gdelt'",
+
     "pyarrow>=24.0.0",
+    "scipy>=1.17.1",
 ]
 
 [project.optional-dependencies]
