@@ -56,8 +56,8 @@ def bootstrap_ils_dl_ci(
         return None, None
 
     # Ensure timestamps are comparable
-    t_open_ts = pd.Timestamp(t_open, tz="UTC") if t_open.tzinfo else pd.Timestamp(t_open).tz_localize("UTC")
-    t_event_ts = pd.Timestamp(t_event, tz="UTC") if t_event.tzinfo else pd.Timestamp(t_event).tz_localize("UTC")
+    t_open_ts = pd.Timestamp(t_open).tz_convert("UTC") if t_open.tzinfo else pd.Timestamp(t_open).tz_localize("UTC")
+    t_event_ts = pd.Timestamp(t_event).tz_convert("UTC") if t_event.tzinfo else pd.Timestamp(t_event).tz_localize("UTC")
 
     ts_col = pd.to_datetime(trades["ts"], utc=True)
     mask = (ts_col >= t_open_ts) & (ts_col <= t_event_ts) & (trades["outcome_index"] == 1)

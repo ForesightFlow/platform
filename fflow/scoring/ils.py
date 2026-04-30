@@ -24,9 +24,9 @@ from pydantic import BaseModel
 _EPSILON_DEFAULT = Decimal("0.05")
 _LOOKUP_TOLERANCE = timedelta(minutes=5)
 _DEADLINE_LOOKBACK = timedelta(hours=1)  # T_resolve⁻ = T_resolve - 1h
-# CLOB indexing lag: first trade price can appear up to 30 min after market creation.
-# T_open lookup uses a forward-only window [t_open, t_open + 30min] instead of ±5 min.
-_TOPEN_FORWARD_WINDOW = timedelta(minutes=30)
+# For historical markets (trade-synthesized prices), first trade can appear well after
+# market creation. Window widened to 24h to accommodate illiquid long-tail markets.
+_TOPEN_FORWARD_WINDOW = timedelta(hours=24)
 
 _WINDOWS: dict[str, timedelta] = {
     "30min": timedelta(minutes=30),

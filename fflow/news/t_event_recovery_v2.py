@@ -25,6 +25,7 @@ import re
 from datetime import UTC, datetime
 from typing import NamedTuple
 
+import anthropic
 import structlog
 
 log = structlog.get_logger()
@@ -53,6 +54,7 @@ class TEventResult(NamedTuple):
     output_tokens: int
     web_search_calls: int
     estimated_cost_usd: float
+    provider: str = "anthropic"  # "gemini" | "openai" | "anthropic"
 
 
 _RECOVERY_PROMPT = """\
@@ -65,7 +67,10 @@ Market question: {question}
 Market opened: {t_open}
 Market resolved YES: {t_resolve}
 
-Find: the UTC timestamp at which the event this market resolves-on FIRST publicly occurred.
+Find: the UTC timestamp at which the underlying event PHYSICALLY OCCURRED — the moment
+of the action itself (troop movement, government signing, arrest, announcement, attack, etc.).
+Use the actual event date, NOT the date it was first reported or confirmed in the press.
+If press reporting came 1-3 days after the event, use the event date.
 The timestamp must fall within [{t_open}, {t_resolve}].
 
 Output ONLY this JSON (no preamble, no markdown fences):
@@ -142,22 +147,43 @@ async def recover_t_event_one_shot(
         t_resolve=t_resolve_s,
     )
 
-    try:
-        response = await client.messages.create(
-            model=model,
-            max_tokens=_MAX_TOKENS_RECOVERY,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=[{"role": "user", "content": prompt}],
-        )
-    except Exception as exc:
-        log.warning("t_event_api_error", question=question[:60], model=model, error=str(exc))
-        cost = 0.0
-        return TEventResult(
-            t_event=None, confidence=0.0, n_sources=0, sources=(),
-            reasoning=f"API error: {exc}", model_used=model,
-            input_tokens=0, output_tokens=0, web_search_calls=0,
-            estimated_cost_usd=cost,
-        )
+    response = None
+    _RETRY_WAITS = (10, 20, 40, 60, 60)
+    for attempt, wait in enumerate((*_RETRY_WAITS, None)):
+        try:
+            response = await client.messages.create(
+                model=model,
+                max_tokens=_MAX_TOKENS_RECOVERY,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                messages=[{"role": "user", "content": prompt}],
+            )
+            break
+        except anthropic.RateLimitError as exc:
+            if wait is None:
+                log.warning("t_event_rate_limit_giving_up", question=question[:60], model=model)
+                return TEventResult(
+                    t_event=None, confidence=0.0, n_sources=0, sources=(),
+                    reasoning=f"Rate limit after {len(_RETRY_WAITS)} retries: {exc}",
+                    model_used=model, input_tokens=0, output_tokens=0,
+                    web_search_calls=0, estimated_cost_usd=0.0,
+                )
+            # Honour Retry-After header if present
+            retry_after = None
+            if hasattr(exc, "response") and exc.response is not None:
+                retry_after = exc.response.headers.get("retry-after")
+            actual_wait = (float(retry_after) + 1) if retry_after else wait
+            log.warning("t_event_rate_limit_retry", question=question[:60], model=model,
+                        attempt=attempt + 1, wait_s=actual_wait)
+            await asyncio.sleep(actual_wait)
+        except Exception as exc:
+            log.warning("t_event_api_error", question=question[:60], model=model, error=str(exc))
+            return TEventResult(
+                t_event=None, confidence=0.0, n_sources=0, sources=(),
+                reasoning=f"API error: {exc}", model_used=model,
+                input_tokens=0, output_tokens=0, web_search_calls=0,
+                estimated_cost_usd=0.0,
+            )
+    assert response is not None
 
     # Count web_search tool calls in the content
     web_calls = sum(
