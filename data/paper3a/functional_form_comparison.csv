@@ -1,0 +1,4 @@
+category,subcategory,period,distribution,aic,bic,ks_pvalue,n_params
+regulatory_decision,regulatory_decision_formal,post_2024,exponential,179.45,180.541,0.4559,1
+regulatory_decision,regulatory_decision_formal,post_2024,weibull,180.501,182.683,0.3931,2
+regulatory_decision,regulatory_decision_formal,post_2024,lognormal,182.547,184.729,0.4721,2

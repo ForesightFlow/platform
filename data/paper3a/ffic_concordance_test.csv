@@ -1,0 +1,4 @@
+threshold,n_ffic_in_scope,expected_uniform,observed,binomial_pvalue
+top_10,1,0.1,0,1.0
+top_5,1,0.05,0,1.0
+top_1,1,0.01,0,1.0
