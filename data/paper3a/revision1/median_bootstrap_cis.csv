@@ -1,0 +1,7 @@
+bucket,period,n,median_raw,ci_low_raw,ci_high_raw,median_adj,ci_low_adj,ci_high_adj,frac_positive,frac_pos_ci_low,frac_pos_ci_high
+regulatory_announcement,pre_2024,5,-0.2315,-0.999,0.47,-0.2616,-1.0918,0.8586,0.0,0.0,0.8
+regulatory_announcement,post_2024,14,-0.7968,-1.4781,-0.2593,-0.8351,-1.4506,-0.2443,0.0,0.0,0.3571
+regulatory_formal,pre_2024,14,-0.1578,-0.485,0.0118,-0.1316,-0.5303,0.057,0.0,0.0714,0.5
+regulatory_formal,post_2024,22,-0.211,-0.401,0.3715,-0.0178,-0.308,0.8412,0.0,0.2273,0.5909
+other,pre_2024,14,-0.875,-0.998,-0.275,-0.7923,-1.0172,-0.2695,0.0,0.0,0.3571
+other,post_2024,19,-0.5467,-0.8736,-0.2347,-0.3399,-0.5628,-0.0065,0.0,0.0,0.2632

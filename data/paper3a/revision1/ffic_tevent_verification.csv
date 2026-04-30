@@ -1,0 +1,2 @@
+case_id,known_date,llm_recovered_date,exact_match,within_24h,source_match,provider,confidence,delta_days
+fficd-005,2024-01-10,2024-01-10,True,True,False,unknown,0.95,0

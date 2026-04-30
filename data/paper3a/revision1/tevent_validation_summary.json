@@ -1,0 +1,36 @@
+{
+  "n_total": 50,
+  "overall": {
+    "exact_match_rate": 0.5778,
+    "within_24h_rate": 0.6889,
+    "within_6h_rate": 0.5778,
+    "source_overlap_rate": 0.0
+  },
+  "by_bucket": {
+    "regulatory_announcement": {
+      "n": 12,
+      "exact_match_rate": 0.5,
+      "within_24h_rate": 0.5833,
+      "within_6h_rate": 0.5,
+      "source_overlap_rate": 0.0
+    },
+    "regulatory_formal": {
+      "n": 18,
+      "exact_match_rate": 0.3571,
+      "within_24h_rate": 0.5,
+      "within_6h_rate": 0.3571,
+      "source_overlap_rate": 0.0
+    },
+    "other": {
+      "n": 20,
+      "exact_match_rate": 0.7895,
+      "within_24h_rate": 0.8947,
+      "within_6h_rate": 0.7895,
+      "source_overlap_rate": 0.0
+    }
+  },
+  "n_disagreements": 24,
+  "n_minor_disagreements": 9,
+  "n_major_disagreements": 10,
+  "estimated_cost_usd": 2.7656
+}
