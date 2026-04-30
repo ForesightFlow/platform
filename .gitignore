@@ -9,3 +9,8 @@ dist/
 *.log
 .DS_Store
 datasets/
+.claude/
+memory/
+# operational checkpoints — large, resumable, not reproducible outputs
+data/paper3a/*_checkpoint.jsonl
+data/paper3a/phase1_log.jsonl
