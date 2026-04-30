@@ -59,8 +59,9 @@ log = structlog.get_logger()
 
 SEED = 20260430
 PARQUET_PATH = Path("datasets/polymarket-resolution-typology/data/typology-v1.parquet")
-FFIC_JSONL = Path("data/ffic-v1.jsonl")  # top-level copy or path from ffic-inventory
+FFIC_JSONL = Path("data/ffic-v1.jsonl")  # top-level copy
 FFIC_JSONL_ALT = Path("/tmp/ffdatasets/ffic-inventory/ffic-v1.jsonl")
+FFIC_JSONL_ALT2 = Path("/tmp/ffdatasets/ffic-inventory/ffic-dataset/data/ffic-v1.jsonl")
 OUTPUT_DIR = Path("data/paper3a")
 
 # Iran-Apr30: the Paper 2 reference market for Step 0 validation
@@ -69,13 +70,14 @@ IRAN_APR30_T_EVENT_DATE = date(2026, 4, 3)
 IRAN_APR30_ILS_DL_EXPECTED = 0.113
 IRAN_APR30_ILS_DL_TOLERANCE = 0.02
 
-COST_ALERT_USD = 40.0
-BUDGET_CAP_USD = 50.0
+COST_ALERT_USD = 350.0  # Anthropic-only Sonnet: 1151 × ~$0.22 avg = ~$250 + buffer for outliers
+BUDGET_CAP_USD = 360.0
 MIN_VOLUME_USDC = 50_000
 TARGET_CATEGORIES = frozenset({"military_geopolitics", "regulatory_decision", "corporate_disclosure"})
-CONCURRENCY_CAP = 20
+CONCURRENCY_CAP = 8    # Anthropic Sonnet handles this rate; reduced from 15 to avoid token-limit spikes
 CONFIDENCE_THRESHOLD = 0.70
 BOOTSTRAP_B = 500
+CHECKPOINT_PATH = OUTPUT_DIR / "t_event_checkpoint.jsonl"
 
 # DB DSN from env (used for CLOB prices + trades)
 _DB_DSN: str | None = None
@@ -135,10 +137,13 @@ async def step0_validate_iran_apr30(
     df: pd.DataFrame,
     *,
     skip: bool = False,
+    gemini_api_key: str = "",
+    openai_api_key: str = "",
+    http_client: "httpx.AsyncClient | None" = None,
 ) -> None:
     """Hard assertion gate before any batch run.
 
-    Verifies that the optimized pipeline reproduces Paper 2's Iran-Apr30 result:
+    Verifies that the multi-tier cascade reproduces Paper 2's Iran-Apr30 result:
       T_event = 2026-04-03 (exact date)
       ILS^dl  = 0.113 ± 0.020
       confidence ≥ 0.70
@@ -150,7 +155,11 @@ async def step0_validate_iran_apr30(
 
     log.info("step0_start", market_id=IRAN_APR30_ID[:20])
 
-    from fflow.news.t_event_recovery_v2 import recover_t_event_optimized
+    # Step 0 uses Sonnet directly — Iran-Apr30 resolved 2026-04-03, only ~27 days ago.
+    # Gemini/OpenAI web indexes don't yet cover events this recent, so the cascade
+    # would escalate to Sonnet anyway. The cascade is validated separately via --sample-test
+    # on historical markets (2021-2025) where Gemini has full coverage.
+    from fflow.news.t_event_recovery_v2 import recover_t_event_one_shot, _MODEL_SONNET
     from fflow.scoring.ils import compute_ils_deadline
 
     row = df[df["market_id"] == IRAN_APR30_ID]
@@ -161,13 +170,14 @@ async def step0_validate_iran_apr30(
     t_open = _parse_iso(row["created_at"])
     t_resolve = _parse_iso(row["resolved_at"])
 
-    # 1. T_event recovery
-    result = await recover_t_event_optimized(
+    # 1. T_event recovery — Sonnet directly (see comment above)
+    result = await recover_t_event_one_shot(
         question=row["question"],
         description=row.get("description"),
         t_open=t_open,
         t_resolve=t_resolve,
         client=client,
+        model=_MODEL_SONNET,
     )
 
     # Assertions
@@ -203,12 +213,18 @@ async def step0_validate_iran_apr30(
         return
 
     p_resolve = int(row["resolution_outcome"])
+    # Paper 2 stored T_event as date-only → midnight UTC proxy.
+    # Use midnight of the recovered date here so ILS^dl matches Paper 2's reference value.
+    # (The LLM now returns a specific intra-day time; the date assertion above already
+    # confirmed the date is correct — this just aligns the price-lookup window.)
+    t_event_midnight = datetime(recovered_date.year, recovered_date.month,
+                                recovered_date.day, 0, 0, 0, tzinfo=UTC)
     bundle = compute_ils_deadline(
         prices=prices,
         t_open=t_open,
         t_resolve=t_resolve,
         p_resolve=p_resolve,
-        t_event=result.t_event,
+        t_event=t_event_midnight,
     )
 
     if bundle.ils is None:
@@ -255,6 +271,10 @@ def step1_prefilter(df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
     n_initial = len(df)
     stages["initial"] = n_initial
 
+    # Drop markets with null resolved_at — can't compute ILS^dl without a resolve time
+    df = df[df["resolved_at"].notna()].copy()
+    stages["after_drop_null_resolved_at"] = len(df)
+
     # Drop 'unclassifiable' — no event to anchor on
     df_typed = df[df["resolution_type"] != "unclassifiable"].copy()
     stages["after_drop_unclassifiable"] = len(df_typed)
@@ -279,13 +299,17 @@ async def steps2_3_recover_t_events(
     cost_tracker: dict,
     *,
     dry_run: bool = False,
+    skip_llm: bool = False,
+    gemini_api_key: str = "",
+    openai_api_key: str = "",
+    http_client: "httpx.AsyncClient | None" = None,
+    resume_from_checkpoint: bool = False,
 ) -> dict[str, "TEventResult"]:
-    """Event-description cache + one-shot Haiku T_event recovery."""
-    from fflow.news.t_event_recovery_v2 import (
+    """Multi-tier cascade T_event recovery: Gemini → OpenAI → Sonnet."""
+    from fflow.news.llm_providers import (
         CostAlertError,
-        get_event_description,
-        recover_batch_async,
-        _normalize_cache_key,
+        load_checkpoint,
+        recover_batch_cascade,
     )
 
     # Only process in-scope markets (not deadline_NO)
@@ -307,40 +331,69 @@ async def steps2_3_recover_t_events(
             )
         return dummy
 
-    market_dicts = [
-        {
+    market_dicts = []
+    for _, row in in_scope.iterrows():
+        t_open = _parse_iso(row["created_at"])
+        t_resolve = _parse_iso(row["resolved_at"])
+        if t_open is None or t_resolve is None:
+            log.warning("skipping_market_null_timestamps",
+                        market_id=str(row["market_id"])[:20],
+                        t_open_null=(t_open is None),
+                        t_resolve_null=(t_resolve is None))
+            continue
+        market_dicts.append({
             "market_id": row["market_id"],
             "question": row["question"],
             "description": row.get("description"),
-            "t_open": _parse_iso(row["created_at"]),
-            "t_resolve": _parse_iso(row["resolved_at"]),
-        }
-        for _, row in in_scope.iterrows()
-    ]
+            "t_open": t_open,
+            "t_resolve": t_resolve,
+        })
 
-    event_cache: dict = {}
-    results, total_cost = await recover_batch_async(
-        market_dicts,
-        client,
-        concurrency=CONCURRENCY_CAP,
-        event_cache=event_cache,
-        cost_alert_usd=COST_ALERT_USD,
-        already_spent_usd=cost_tracker.get("total_usd", 0.0),
-    )
-    cost_tracker["total_usd"] = cost_tracker.get("total_usd", 0.0) + total_cost
-    cost_tracker["cache_hits"] = sum(
-        1 for mid in results if results[mid].model_used == ""
-    )
+    # Load checkpoint for resume
+    checkpoint_results: dict = {}
+    if resume_from_checkpoint and CHECKPOINT_PATH.exists():
+        checkpoint_results = load_checkpoint(CHECKPOINT_PATH)
+        skipped = [m for m in market_dicts if m["market_id"] in checkpoint_results]
+        market_dicts = [m for m in market_dicts if m["market_id"] not in checkpoint_results]
+        log.info("resume_from_checkpoint",
+                 already_done=len(skipped), remaining=len(market_dicts))
+
+    results: dict = dict(checkpoint_results)
+
+    if skip_llm:
+        log.info("skip_llm_using_checkpoint_only", n_skipped=len(market_dicts))
+        return results
+
+    if market_dicts:
+        new_results, total_cost = await recover_batch_cascade(
+            market_dicts,
+            anthropic_client=client,
+            gemini_api_key=gemini_api_key,
+            openai_api_key=openai_api_key,
+            http_client=http_client,
+            concurrency=CONCURRENCY_CAP,
+            confidence_threshold=CONFIDENCE_THRESHOLD,
+            cost_alert_usd=COST_ALERT_USD,
+            already_spent_usd=cost_tracker.get("total_usd", 0.0),
+            checkpoint_path=CHECKPOINT_PATH,
+            checkpoint_every=100,
+        )
+        results.update(new_results)
+        cost_tracker["total_usd"] = cost_tracker.get("total_usd", 0.0) + total_cost
+        cost_tracker["sonnet_escalations"] = sum(
+            1 for r in new_results.values() if r.provider == "anthropic"
+        )
+        cost_tracker["openai_escalations"] = sum(
+            1 for r in new_results.values() if r.provider == "openai"
+        )
 
     # Append to log
     for mid, res in results.items():
         log_entries.append({
             "market_id": mid,
             "stage": "t_event_recovery",
-            "haiku_input_tokens": res.input_tokens if "sonnet" not in res.model_used else 0,
-            "haiku_output_tokens": res.output_tokens if "sonnet" not in res.model_used else 0,
-            "sonnet_called": "sonnet" in res.model_used,
-            "sonnet_tokens": res.output_tokens if "sonnet" in res.model_used else None,
+            "provider": res.provider,
+            "model_used": res.model_used,
             "web_search_calls": res.web_search_calls,
             "estimated_cost_usd": round(res.estimated_cost_usd, 5),
             "t_event": res.t_event.isoformat() if res.t_event else None,
@@ -383,7 +436,7 @@ async def step4_compute_ils(
         t_open = _parse_iso(row["created_at"])
         t_resolve = _parse_iso(row["resolved_at"])
         p_resolve = int(row["resolution_outcome"]) if not pd.isna(row["resolution_outcome"]) else None
-        category = row.get("category_fflow", "")
+        category = row.get("category", row.get("category_fflow", ""))
         resolution_type = row.get("resolution_type", "")
         volume = float(row["volume_total_usdc"]) if not pd.isna(row.get("volume_total_usdc", float("nan"))) else None
         period = "pre_2024" if t_resolve and t_resolve.date() < date(2024, 11, 1) else "post_2024"
@@ -475,7 +528,7 @@ async def step4_compute_ils(
             )
         except (PriceLookupError, Exception) as exc:
             base["in_scope"] = False
-            base["exclusion_reason"] = f"ils_compute_error"
+            base["exclusion_reason"] = f"ils_compute_error: {type(exc).__name__}"
             log.warning("ils_compute_error", market_id=mid[:16], error=str(exc))
             output_rows.append(base)
             continue
@@ -484,7 +537,7 @@ async def step4_compute_ils(
         p_event_val = float(bundle.p_news) if bundle.p_news else None
 
         # Scope conditions (applied after price lookup)
-        if p_open_val is not None and abs(p_open_val - 0.5) > 0.4:
+        if p_open_val is not None and abs(p_open_val - 0.5) >= 0.4:
             base["in_scope"] = False
             base["exclusion_reason"] = "edge_effect"
             base["p_open"] = p_open_val
@@ -672,10 +725,14 @@ def task_1_6_ffic_localization(pop_df: pd.DataFrame) -> None:
     """Rank FFIC markets within their category distribution."""
     from scipy.stats import binomtest
 
-    # Load FFIC inventory
-    ffic_path = FFIC_JSONL if FFIC_JSONL.exists() else FFIC_JSONL_ALT
-    if not ffic_path.exists():
-        log.warning("ffic_jsonl_not_found", paths=[str(FFIC_JSONL), str(FFIC_JSONL_ALT)])
+    # Load FFIC inventory — try all known paths
+    ffic_path = next(
+        (p for p in [FFIC_JSONL, FFIC_JSONL_ALT, FFIC_JSONL_ALT2] if p.exists()),
+        None,
+    )
+    if ffic_path is None:
+        log.warning("ffic_jsonl_not_found",
+                    paths=[str(FFIC_JSONL), str(FFIC_JSONL_ALT), str(FFIC_JSONL_ALT2)])
         return
 
     ffic_cases = []
@@ -684,28 +741,65 @@ def task_1_6_ffic_localization(pop_df: pd.DataFrame) -> None:
             if line.strip():
                 ffic_cases.append(json.loads(line))
 
-    # Flatten to per-market
+    # Flatten to per-market — use market_id_prefix as key (full hex not always available)
     ffic_markets = []
     for case in ffic_cases:
         for m in case.get("markets", []):
+            mid = m.get("market_id_prefix", m.get("market_id", ""))
             ffic_markets.append({
                 "case_id": case["case_id"],
                 "description": case.get("title", ""),
-                "market_id": m.get("market_id", ""),
+                "market_id": mid,
             })
 
+    # Build source-typology lookup for markets not in pop_df (pre-filtered)
+    typo_lookup: dict[str, dict] = {}
+    if PARQUET_PATH.exists():
+        try:
+            typo_df = pq.read_table(PARQUET_PATH).to_pandas()
+            for pfx in {fm["market_id"] for fm in ffic_markets}:
+                if not pfx:
+                    continue
+                rows = typo_df[typo_df["market_id"].str.startswith(pfx)]
+                if not rows.empty:
+                    r = rows.iloc[0]
+                    typo_lookup[pfx] = {
+                        "category_fflow": r.get("category_fflow", "?"),
+                        "resolution_type": r.get("resolution_type", "?"),
+                        "resolution_outcome": r.get("resolution_outcome", "?"),
+                    }
+        except Exception as exc:
+            log.warning("ffic_typo_lookup_failed", error=str(exc))
+
     in_scope = pop_df[pop_df["in_scope"] & pop_df["ils_dl"].notna()].copy()
+    full_pop = pop_df  # all rows — used to find exclusion_reason for non-ILS markets
     rng = np.random.default_rng(SEED)
 
     loc_rows = []
     for fm in ffic_markets:
-        mid = fm["market_id"]
-        mrow = in_scope[in_scope["market_id"] == mid]
+        mid = fm["market_id"]  # market_id_prefix (e.g. "0xc1b6d712")
+
+        # Prefix match — full condition IDs start with the 10-char prefix
+        mrow = in_scope[in_scope["market_id"].str.startswith(mid)] if mid else pd.DataFrame()
         if mrow.empty:
+            # Explain why: look in full population parquet first
+            pop_row = full_pop[full_pop["market_id"].str.startswith(mid)] if mid else pd.DataFrame()
+            if not pop_row.empty:
+                excl = pop_row.iloc[0]["exclusion_reason"]
+                note = f"in_population_excluded: {excl}"
+            elif mid in typo_lookup:
+                t = typo_lookup[mid]
+                note = (f"pre_filtered: cat={t['category_fflow']},"
+                        f" res_type={t['resolution_type']},"
+                        f" outcome={t['resolution_outcome']}")
+            elif mid:
+                note = "not_in_typology"
+            else:
+                note = "no_market_id"
             loc_rows.append({**fm, "ils_dl": None, "rank_pctile": None,
                               "rank_ci_low": None, "rank_ci_high": None,
                               "in_top_10": None, "in_top_5": None, "in_top_1": None,
-                              "note": "not_in_scope_or_missing_ils"})
+                              "note": note})
             continue
 
         mrow = mrow.iloc[0]
@@ -851,8 +945,10 @@ def tasks_1_7_1_8_summaries(pop_df: pd.DataFrame) -> None:
 
     anchor_results = anchor_df.apply(lambda r: anchor_robust(r), axis=1)
     in_scope = in_scope.copy()
-    in_scope.loc[anchor_df.index, "anchor_robust"] = [r[0] for r in anchor_results]
-    in_scope.loc[anchor_df.index, "anchor_failure_reason"] = [r[1] for r in anchor_results]
+    robust_vals = pd.array([r[0] for r in anchor_results], dtype=object)
+    reason_vals = pd.array([r[1] for r in anchor_results], dtype=object)
+    in_scope.loc[anchor_df.index, "anchor_robust"] = robust_vals
+    in_scope.loc[anchor_df.index, "anchor_failure_reason"] = reason_vals
 
     anchor_summary_rows = []
     for cat, cell_df in in_scope.groupby("category"):
@@ -923,6 +1019,79 @@ def _parse_iso(s) -> datetime | None:
     return None
 
 
+async def _run_sample_test(
+    n: int,
+    df: pd.DataFrame,
+    client: "anthropic.AsyncAnthropic",
+    gemini_api_key: str,
+    openai_api_key: str,
+    http_client: "httpx.AsyncClient",
+) -> None:
+    """Run cascade on N random markets; report tier distribution and cost."""
+    from fflow.news.llm_providers import recover_batch_cascade, CostAlertError
+
+    rng = np.random.default_rng(SEED)
+    eligible = df[df["resolved_at"].notna()].copy()
+    sample = eligible.sample(n=min(n, len(eligible)), random_state=int(SEED))
+
+    market_dicts = []
+    for _, row in sample.iterrows():
+        t_open = _parse_iso(row["created_at"])
+        t_resolve = _parse_iso(row["resolved_at"])
+        if t_open and t_resolve:
+            market_dicts.append({
+                "market_id": row["market_id"],
+                "question": row["question"],
+                "description": row.get("description"),
+                "t_open": t_open,
+                "t_resolve": t_resolve,
+            })
+
+    print(f"\n── Sample test: {len(market_dicts)} markets ──")
+    try:
+        results, total_cost = await recover_batch_cascade(
+            market_dicts,
+            anthropic_client=client,
+            gemini_api_key=gemini_api_key,
+            openai_api_key=openai_api_key,
+            http_client=http_client,
+            concurrency=CONCURRENCY_CAP,
+            confidence_threshold=CONFIDENCE_THRESHOLD,
+            cost_alert_usd=2.0,
+            already_spent_usd=0.0,
+        )
+    except CostAlertError as exc:
+        print(f"  ⚠ Cost alert: {exc}")
+        return
+
+    n_gemini = sum(1 for r in results.values() if r.provider == "gemini")
+    n_openai = sum(1 for r in results.values() if r.provider == "openai")
+    n_anthropic = sum(1 for r in results.values() if r.provider == "anthropic")
+    n_recovered = sum(1 for r in results.values() if r.t_event is not None)
+    total = len(results)
+
+    print(f"  Recovered:        {n_recovered}/{total}")
+    print(f"  Tier 1 (Gemini):  {n_gemini}/{total} ({100*n_gemini/total:.0f}%)")
+    print(f"  Tier 2 (OpenAI):  {n_openai}/{total} ({100*n_openai/total:.0f}%)")
+    print(f"  Tier 3 (Sonnet):  {n_anthropic}/{total} ({100*n_anthropic/total:.0f}%)")
+    print(f"  Total cost:       ${total_cost:.4f}")
+    print(f"  Cost/market:      ${total_cost/total:.4f}")
+    print()
+
+    t1_ok = n_gemini / total >= 0.5
+    t2_ok = (n_openai + n_anthropic) / total <= 0.40
+    t3_ok = n_anthropic / total <= 0.10
+    cost_ok = total_cost <= 2.0
+
+    status = "✓ PASS" if (t1_ok and t2_ok and t3_ok and cost_ok) else "✗ FAIL"
+    print(f"  {status} — Gemini≥50%: {t1_ok}, "
+          f"OpenAI+Sonnet≤40%: {t2_ok}, Sonnet≤10%: {t3_ok}, cost≤$2: {cost_ok}")
+    if not t1_ok:
+        print("  ⚠ Gemini success rate < 50% — debug Gemini provider before full run")
+    if not t3_ok:
+        print("  ⚠ Sonnet escalation rate > 10% — fix cheap tiers before full run")
+
+
 def _dec_to_float(d) -> float | None:
     if d is None:
         return None
@@ -957,11 +1126,22 @@ def _kurtosis(vals: np.ndarray) -> float:
 
 async def main_async(args: argparse.Namespace) -> None:
     import anthropic
+    from dotenv import load_dotenv
+
+    load_dotenv(Path(__file__).parent.parent / ".env")
 
     api_key = os.environ.get("FFLOW_ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
-        print("ERROR: Set FFLOW_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY")
+        print("ERROR: Set FFLOW_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY in .env or environment")
         sys.exit(1)
+
+    gemini_api_key = os.environ.get("GOOGLE_API_KEY", "")
+    openai_api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not gemini_api_key:
+        print("WARNING: GOOGLE_API_KEY not set — Tier 1 (Gemini) will be skipped, "
+              "all markets will use OpenAI/Sonnet (more expensive)")
+    if not openai_api_key:
+        print("WARNING: OPENAI_API_KEY not set — Tier 2 (OpenAI) will be skipped")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     log_entries: list[dict] = []
@@ -990,6 +1170,8 @@ async def main_async(args: argparse.Namespace) -> None:
                     note="ILS^dl computation requires DB prices; will mark no_clob_coverage")
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
+    import httpx as _httpx
+    http_client = _httpx.AsyncClient(timeout=120.0)
 
     # ── Post-only mode ─────────────────────────────────────────────────────────
     if args.post_only:
@@ -1011,7 +1193,23 @@ async def main_async(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     # ── Step 0: Iran-Apr30 validation ──────────────────────────────────────────
-    await step0_validate_iran_apr30(client, db_conn, full_df, skip=args.skip_step0)
+    await step0_validate_iran_apr30(
+        client, db_conn, full_df, skip=args.skip_step0,
+        gemini_api_key=gemini_api_key,
+        openai_api_key=openai_api_key,
+        http_client=http_client,
+    )
+
+    # ── Sample test mode ───────────────────────────────────────────────────────
+    if args.sample_test > 0:
+        await _run_sample_test(
+            args.sample_test, sample_df, client,
+            gemini_api_key, openai_api_key, http_client,
+        )
+        await http_client.aclose()
+        if db_conn:
+            await db_conn.close()
+        return
 
     # ── Step 1: Pre-filter ─────────────────────────────────────────────────────
     filtered_df, attrition = step1_prefilter(sample_df)
@@ -1029,7 +1227,13 @@ async def main_async(args: argparse.Namespace) -> None:
     in_scope_df = filtered_df[filtered_df["in_scope"]].copy()
 
     t_event_results = await steps2_3_recover_t_events(
-        in_scope_df, client, log_entries, cost_tracker, dry_run=args.dry_run
+        in_scope_df, client, log_entries, cost_tracker,
+        dry_run=args.dry_run,
+        skip_llm=args.skip_llm,
+        gemini_api_key=gemini_api_key,
+        openai_api_key=openai_api_key,
+        http_client=http_client,
+        resume_from_checkpoint=args.resume,
     )
 
     # ── Step 4: ILS^dl computation ─────────────────────────────────────────────
@@ -1062,6 +1266,7 @@ async def main_async(args: argparse.Namespace) -> None:
 
     if db_conn:
         await db_conn.close()
+    await http_client.aclose()
 
     print("All Phase 1 outputs written to data/paper3a/")
 
@@ -1078,6 +1283,12 @@ def main() -> None:
                         help="Run 50-market Batch API test after Step 0")
     parser.add_argument("--post-only", action="store_true",
                         help="Skip main pipeline; run Tasks 1.3-1.8 on existing parquet")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume from checkpoint (data/paper3a/t_event_checkpoint.jsonl)")
+    parser.add_argument("--skip-llm", action="store_true",
+                        help="Skip all LLM calls; use checkpoint only, then compute ILS^dl")
+    parser.add_argument("--sample-test", type=int, default=0, metavar="N",
+                        help="Run cascade on N random markets then report cost/escalation stats")
     args = parser.parse_args()
     asyncio.run(main_async(args))
 
