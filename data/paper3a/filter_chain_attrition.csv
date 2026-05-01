@@ -1,0 +1,7 @@
+stage,n_remaining,n_dropped,drop_reason
+Initial (cat+vol≥50K),12708,0,---
+Drop unclassifiable,2375,10333,unclassifiable
+Deadline_NO marked out-of-scope,1151,1224,deadline_NO
+T_event confidence ≥0.7,442,709,LLM low confidence
+CLOB coverage,358,84,no_clob_coverage
+ILS^dl computed,88,0,---

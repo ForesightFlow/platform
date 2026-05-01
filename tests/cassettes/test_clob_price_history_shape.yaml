@@ -1,0 +1,62 @@
+interactions:
+- request:
+    body: ''
+    headers:
+      Accept:
+      - '*/*'
+      Accept-Encoding:
+      - gzip, deflate
+      Connection:
+      - keep-alive
+      Host:
+      - clob.polymarket.com
+      User-Agent:
+      - python-httpx/0.28.1
+    method: GET
+    uri: https://clob.polymarket.com/prices-history?market=2527312495175492857904889758552137141356236738032676480522356889996545113869&startTs=1774400000&endTs=1774407200&fidelity=1
+  response:
+    body:
+      string: !!binary |
+        H4sIAAAAAAAA/3WWu44UMRBFcz6j49XK9XbNryByiBbBJmg1/04TsOO25iSdHLV9XY9b9XF8//H7
+        /e3Xn+P29eN4P25S5T7GEH85fh638eoW95cLKvmP/ErEgn6SHoQ06DwTJZITiLMGbyEUgSgFlSdG
+        ogzDV6xihhJqYVSEZBijJoUigUhRhmjRu8TMEGE0xH0SCh2IClFaIpp4V2FSZGJpyMwm1I7RaJSh
+        AytURQwRylDFElVlGYZJUcfaUGcZgUnRQM/QZBnFMmqO5/2q8xGMnTT0uHbYc2JnCxHBQJgYHSeY
+        DlOsCrNRiIoKxlw/BeqOWEZgOmy1z40k/lSLiW9k8YsrmY90bKSXWbaRJR0X8u8mEOejYSq5oFW4
+        Yo+6oghzmmVuDa91dzoulorYyJKKK0kcp7565pWwZfoUPG8W1YM3DhDvpruCLTNEGGGLhmIw4vQJ
+        QpZkY+EYjfBlql8JO2YETtPIQBU1UPv5BTuIaZD+mJySRhV5rj+IcLVIXjlTMBjJtplG3p1W0Pfp
+        bkTIKzIePeKbhFRDVIjK8MBqRJOW72wl6V3xnNSyb+5kwsJeEk+fVOd25flZfRX3b/cvfwEscTD2
+        rgwAAA==
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - public, max-age=90
+      cf-cache-status:
+      - MISS
+      cf-ray:
+      - 9f23336b1ccf4a1f-DXB
+      content-encoding:
+      - gzip
+      content-type:
+      - application/json
+      date:
+      - Sun, 26 Apr 2026 05:31:22 GMT
+      expires:
+      - Sun, 26 Apr 2026 05:32:52 GMT
+      last-modified:
+      - Sun, 26 Apr 2026 05:31:22 GMT
+      server:
+      - cloudflare
+      set-cookie:
+      - __cf_bm=nQ.H._k7_QflgNHjrs57ft_v4zxZwxhFbpqRkwcSqsU-1777181482.7340066-1.0.1.1-uHM46YDodbOoMBoPXE_4seaWlKQ_QuVcqZKEzCwrKV_Cz1Sp0YZb_ZZm8pAi.gQb8yJyCC5aO4vOHdbkph725tCaXTmAqOBMpJy.5n3FN57NASz1rNHe833mzlguRxGF;
+        HttpOnly; Secure; Path=/; Domain=polymarket.com; Expires=Sun, 26 Apr 2026
+        06:01:22 GMT
+      strict-transport-security:
+      - max-age=7776000; includeSubDomains
+      vary:
+      - Accept-Encoding
+      - Origin
+    status:
+      code: 200
+      message: null
+version: 1

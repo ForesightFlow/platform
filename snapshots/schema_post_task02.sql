@@ -1,0 +1,1 @@
+-- pg_dump failed: [Errno 2] No such file or directory: 'pg_dump'

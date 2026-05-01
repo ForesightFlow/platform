@@ -1,0 +1,4 @@
+category,n_total,n_anchor_robust,pct_anchor_robust,spearman_24h_to_event
+corporate_disclosure,11,1,9.1,0.0952
+military_geopolitics,22,1,4.5,0.1592
+regulatory_decision,55,10,18.2,0.4205

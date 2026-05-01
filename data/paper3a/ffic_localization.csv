@@ -1,0 +1,33 @@
+case_id,description,market_id,ils_dl,rank_pctile,rank_ci_low,rank_ci_high,in_top_10,in_top_5,in_top_1,note
+fficd-001,2024 U.S. Presidential Election,0xdd22472e,,,,,,,,"pre_filtered: cat=other, res_type=unclassifiable, outcome=1.0"
+fficd-001,2024 U.S. Presidential Election,0xc6485bb7,,,,,,,,"pre_filtered: cat=other, res_type=unclassifiable, outcome=0.0"
+fficd-001,2024 U.S. Presidential Election,0x55c55189,,,,,,,,"pre_filtered: cat=other, res_type=unclassifiable, outcome=0.0"
+fficd-001,2024 U.S. Presidential Election,0x230144e3,,,,,,,,"pre_filtered: cat=other, res_type=unclassifiable, outcome=0.0"
+fficd-002,October 2024 Iran strike on Israel,0xc1b6d712,,,,,,,,"pre_filtered: cat=military_geopolitics, res_type=unclassifiable, outcome=1.0"
+fficd-002,October 2024 Iran strike on Israel,0x93727420,,,,,,,,in_population_excluded: deadline_NO
+fficd-002,October 2024 Iran strike on Israel,0xc8312853,,,,,,,,in_population_excluded: deadline_NO
+fficd-003,2026 U.S.-Iran Conflict Cluster,0x6d0e09d0,,,,,,,,in_population_excluded: low_confidence_t_event
+fficd-003,2026 U.S.-Iran Conflict Cluster,0x4c5701bc,,,,,,,,in_population_excluded: edge_effect
+fficd-003,2026 U.S.-Iran Conflict Cluster,0xd4bbf7f6,,,,,,,,"pre_filtered: cat=military_geopolitics, res_type=unclassifiable, outcome=1.0"
+fficd-003,2026 U.S.-Iran Conflict Cluster,0x9823d715,,,,,,,,"pre_filtered: cat=military_geopolitics, res_type=unclassifiable, outcome=1.0"
+fficd-003,2026 U.S.-Iran Conflict Cluster,0x3488f31e,,,,,,,,"pre_filtered: cat=military_geopolitics, res_type=unclassifiable, outcome=1.0"
+fficd-003,2026 U.S.-Iran Conflict Cluster,0x70909f0b,,,,,,,,"pre_filtered: cat=military_geopolitics, res_type=unclassifiable, outcome=1.0"
+fficd-004,January 2026 U.S.–Venezuela / Maduro operation cluster,0xbfa45527,,,,,,,,"pre_filtered: cat=military_geopolitics, res_type=unclassifiable, outcome=1.0"
+fficd-004,January 2026 U.S.–Venezuela / Maduro operation cluster,0x3b4b3c1b,,,,,,,,"pre_filtered: cat=military_geopolitics, res_type=unclassifiable, outcome=1.0"
+fficd-004,January 2026 U.S.–Venezuela / Maduro operation cluster,0x92a5c555,,,,,,,,"pre_filtered: cat=military_geopolitics, res_type=unclassifiable, outcome=1.0"
+fficd-004,January 2026 U.S.–Venezuela / Maduro operation cluster,0xdfaaf716,,,,,,,,"pre_filtered: cat=military_geopolitics, res_type=unclassifiable, outcome=1.0"
+fficd-004,January 2026 U.S.–Venezuela / Maduro operation cluster,0x79801a0f,,,,,,,,"pre_filtered: cat=military_geopolitics, res_type=unclassifiable, outcome=1.0"
+fficd-004,January 2026 U.S.–Venezuela / Maduro operation cluster,0x3ad10b05,,,,,,,,"pre_filtered: cat=military_geopolitics, res_type=unclassifiable, outcome=1.0"
+fficd-004,January 2026 U.S.–Venezuela / Maduro operation cluster,0xe377cc3f,,,,,,,,"pre_filtered: cat=other, res_type=deadline_resolved, outcome=1.0"
+fficd-004,January 2026 U.S.–Venezuela / Maduro operation cluster,0x7f3c6b90,,,,,,,,in_population_excluded: deadline_NO
+fficd-004,January 2026 U.S.–Venezuela / Maduro operation cluster,0x62b0cd59,,,,,,,,in_population_excluded: deadline_NO
+fficd-004,January 2026 U.S.–Venezuela / Maduro operation cluster,0xbea5d517,,,,,,,,in_population_excluded: deadline_NO
+fficd-004,January 2026 U.S.–Venezuela / Maduro operation cluster,0x3f8c674a,,,,,,,,in_population_excluded: deadline_NO
+fficd-005,Bitcoin ETF SEC approval,0xb36886bb,0.011765,78.57,57.14,100.0,False,False,False,
+fficd-006,Google Year-in-Search rankings 2025,0x54361608,,,,,,,,"pre_filtered: cat=corporate_disclosure, res_type=unclassifiable, outcome=0.0"
+fficd-006,Google Year-in-Search rankings 2025,0x45126353,,,,,,,,"pre_filtered: cat=corporate_disclosure, res_type=unclassifiable, outcome=0.0"
+fficd-006,Google Year-in-Search rankings 2025,0x26477123,,,,,,,,"pre_filtered: cat=corporate_disclosure, res_type=unclassifiable, outcome=0.0"
+fficd-007,FTX / SBF case cluster,0xf4078ddd,,,,,,,,"pre_filtered: cat=other, res_type=unclassifiable, outcome=0.0"
+fficd-007,FTX / SBF case cluster,0x2b8608c1,,,,,,,,in_population_excluded: ils_compute_error: PriceLookupError
+fficd-007,FTX / SBF case cluster,0x02c8326d,,,,,,,,"pre_filtered: cat=regulatory_decision, res_type=unclassifiable, outcome=1.0"
+fficd-008,Romanian presidential election 2024-2025,0x9872fe47,,,,,,,,in_population_excluded: edge_effect

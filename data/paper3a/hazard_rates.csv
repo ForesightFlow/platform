@@ -1,0 +1,2 @@
+category,subcategory,period,n,lambda_hat,half_life_days,ks_pvalue,lambda_ci_low,lambda_ci_high
+regulatory_decision,regulatory_decision_formal,post_2024,22,0.048173,14.389,0.4559,0.033554,0.079612
