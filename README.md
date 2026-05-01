@@ -85,12 +85,6 @@ Data flow: **Collectors** → PostgreSQL + TimescaleDB → **Taxonomy Classifier
 
 Code: MIT. Future published datasets: CC-BY-4.0.
 
-## Citation
-
-Nechepurenko M. (2026). *ForesightFlow: Real-Time Detection of Informed Trading in Decentralized Prediction Markets.* Preprint: `foresightflow_draft_v0.2.pdf`.
-
----
-
 ## Cite this work
 
 If you use this code, please cite the papers it implements:
